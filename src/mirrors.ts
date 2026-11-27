@@ -1,10 +1,14 @@
 import * as T from 'three';
 
+export const mirrorExcludedLayer=4;
+
 // A rear-facing camera supplies a shared panorama. The side mirrors take different crops.
 export class Mirrors{
   private target=new T.WebGLRenderTarget(448,144,{depthBuffer:true});
   private camera=new T.PerspectiveCamera(30,448/144,.22,970);
   private nextRefresh=0;
+  private mirrorCalls=0;
+  get drawCalls(){return this.mirrorCalls;}
   private rear=new T.Quaternion().setFromAxisAngle(new T.Vector3(0,1,0),Math.PI);
   private surface=new T.MeshBasicMaterial({map:this.target.texture,side:T.DoubleSide,toneMapped:true});
   dispose(){this.target.dispose();this.surface.dispose();}
@@ -18,14 +22,36 @@ export class Mirrors{
     }
     geometry.setAttribute('uv',new T.Float32BufferAttribute(uv,2));mesh.material=this.surface;mesh.castShadow=false;
   }
-  update(renderer:T.WebGLRenderer,scene:T.Scene,body:T.Group,now:number){
-    if(now<this.nextRefresh)return;
-    this.nextRefresh=now+140;
+  private configure(body:T.Group, compact:boolean){
+    const far=compact?500:970;
+    if(this.camera.far!==far){this.camera.far=far;this.camera.updateProjectionMatrix();}
     this.camera.position.set(0,.65,2.27).applyQuaternion(body.quaternion).add(body.position);
     this.camera.quaternion.copy(body.quaternion).multiply(this.rear);
-    const current=renderer.getRenderTarget(),shadows=renderer.shadowMap.autoUpdate;
+  }
+
+  warm(renderer:T.WebGLRenderer,scene:T.Scene,body:T.Group){
+    this.configure(body,true);
+    const current=renderer.getRenderTarget();
+    try {
+      renderer.setRenderTarget(this.target);
+      void renderer.compileAsync(scene,this.camera);
+    } finally {
+      renderer.setRenderTarget(current);
+    }
+  }
+
+  update(renderer:T.WebGLRenderer,scene:T.Scene,body:T.Group,now:number,compact=false){
+    if(now<this.nextRefresh)return;
+    this.nextRefresh=now+140;
+    this.configure(body,compact);
+    const current=renderer.getRenderTarget(),shadows=renderer.shadowMap.autoUpdate,visible=body.visible;
     body.visible=false;renderer.shadowMap.autoUpdate=false;renderer.setRenderTarget(this.target);
-    renderer.render(scene,this.camera);renderer.setRenderTarget(current);
-    body.visible=true;renderer.shadowMap.autoUpdate=shadows;
+    try {
+      renderer.render(scene,this.camera);
+      this.mirrorCalls=renderer.info.render.calls;
+    } finally {
+      renderer.setRenderTarget(current);
+      body.visible=visible;renderer.shadowMap.autoUpdate=shadows;
+    }
   }
 }

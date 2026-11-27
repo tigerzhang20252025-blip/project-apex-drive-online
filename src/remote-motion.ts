@@ -1,6 +1,6 @@
 import * as T from 'three';
-import type { LivePose } from '../multiplayer-poc/src/game.ts';
-import type { Relay } from '../multiplayer-poc/src/protocol.ts';
+import type { DustRates, LivePose } from '../shared/game.ts';
+import type { Relay } from '../shared/protocol.ts';
 
 const sendPeriodMs = 1000 / 15;
 const minDelayMs = 150;
@@ -45,8 +45,10 @@ export class RemoteMotion {
   readonly wheels: [number, number, number, number] = [0, 0, 0, 0];
   readonly suspension: [number, number, number, number] = [0, 0, 0, 0];
   flags = 0;
+  dust?: DustRates;
   visible = false;
 
+  get velocity() { return this.rawVel; }
   get received() { return this.source?.seq ?? 0; }
   get buffered() { return this.frames.length; }
   get progress() { return this.source?.live?.progress ?? 0; }
@@ -109,6 +111,7 @@ export class RemoteMotion {
     if (!last || this.frames.length < 2 || serverNow - last.arrivalNow > staleMs) {
       this.visible = false;
       this.hasRendered = false;
+      this.dust = undefined;
       return false;
     }
 
@@ -211,7 +214,9 @@ export class RemoteMotion {
       const wheelRate = T.MathUtils.clamp((b.live.wheels[i] - a.live.wheels[i]) / spanSec, -400, 400);
       this.wheels[i] = T.MathUtils.lerp(a.live.wheels[i], b.live.wheels[i], u) + wheelRate * extrapSec;
     }
-    this.flags = u < .5 ? a.live.flags : b.live.flags;
+    const live = u < .5 ? a.live : b.live;
+    this.flags = live.flags;
+    this.dust = this.playoutTime - b.time <= extrapolateMs ? live.dust : undefined;
     this.visible = true;
     return true;
   }
@@ -224,6 +229,7 @@ export class RemoteMotion {
     this.posOffset.set(0, 0, 0);
     this.rotOffset.identity();
     this.visible = false;
+    this.dust = undefined;
     if (resetNetworkEstimate) {
       this.transitMs = 50;
       this.jitterMs = 10;

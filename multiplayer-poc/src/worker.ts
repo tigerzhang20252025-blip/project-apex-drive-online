@@ -1,8 +1,9 @@
+import { defaultTrack, isTrackId } from '../../shared/tracks.ts';
 export { Directory } from './directory.ts';
 export { Room } from './room.ts';
-import { gameVersion, isCar } from './game.ts';
+import { gameVersion, isCar } from '../../shared/game.ts';
 import { roomLifetimeMs } from './directory.ts';
-import { jsonObject, objectIdPattern, protocol, roomCodePattern, tokenPattern } from './protocol.ts';
+import { jsonObject, objectIdPattern, protocol, roomCodePattern, tokenPattern } from '../../shared/protocol.ts';
 
 function loopback(host: string) {
   return host === '127.0.0.1' || host === 'localhost';
@@ -102,7 +103,7 @@ export default {
       const shortTest = env.LOCAL_EXPIRY_TEST === 'true' && url.hostname === '127.0.0.1';
       const lease = await directory.reserve(id.toString(), shortTest ? 12_000 : roomLifetimeMs);
       if (!lease) return reply({ error: 'Pilot room limit reached. Try again later.' }, 429);
-      const grant = await rooms.get(id).initialize(lease.code, lease.end, profile, local && env.LOCAL_GAME_TEST === 'true');
+      const grant = await rooms.get(id).initialize(lease.code, lease.end, profile, local && env.LOCAL_GAME_TEST === 'true', isTrackId(body.track) ? body.track : defaultTrack);
       return reply(grant, 201);
     } catch {
       return reply({ error: 'Relay temporarily unavailable.' }, 503);

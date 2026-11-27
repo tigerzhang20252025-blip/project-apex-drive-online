@@ -1,8 +1,8 @@
-# Project Apex Drive
+# Project Apex Drive Online
 
-An open-source 3D racing and driving simulator built with Three.js, TypeScript and Rapier. Drive a Ferrari F40 or the fictional Nissan GT-R R35 Rally Edition on the 5.014 km Alpine Proving Ground.
+An open-source 3D racing and driving simulator built with Three.js, TypeScript and Rapier. Drive a Ferrari F40 or the fictional Nissan GT-R R35 Rally Edition on Alpine Proving Ground or Pineglass Run 2.0. Both courses are available in single player and two-player multiplayer.
 
-**[Play the live demo](https://project-apex-drive-955.netlify.app/)** · [Contribute](CONTRIBUTING.md) · [Asset credits](THIRD_PARTY_NOTICES.md)
+[Multiplayer setup](docs/MULTIPLAYER.md) · [Pineglass Run 2.0](docs/PINEGLASS_RUN.md) · [Asset credits](THIRD_PARTY_NOTICES.md)
 
 ## Screenshots
 
@@ -24,8 +24,8 @@ An open-source 3D racing and driving simulator built with Three.js, TypeScript a
 Install [Node.js 26](https://nodejs.org/) and Git. The browser needs WebGL 2. Run these commands in a terminal.
 
 ```sh
-git clone https://github.com/jinyuze2028-source/project-apex-drive.git
-cd project-apex-drive
+git clone https://github.com/tigerzhang20252025-blip/project-apex-drive-online.git
+cd project-apex-drive-online
 npm ci
 npm run assets:fetch
 npm run dev
@@ -40,6 +40,18 @@ npm run preview -- --port 4194
 ```
 
 To run a headless end-to-end check with the preview running, use `node scripts/production-smoke.mjs http://127.0.0.1:4194/ test-evidence/production r35`. Replace `r35` with `f40` for the F40. On macOS the tests detect Google Chrome. Elsewhere run `npx playwright-core install chromium`, or set `CHROME_PATH` to a local Chrome binary.
+
+## Start a local multiplayer room
+
+Keep the game development server running. In a second terminal, start the relay.
+
+```sh
+cd multiplayer-poc
+npm ci
+npm run dev
+```
+
+Open the game in two browser sessions, choose **Multiplayer**, and share the room code. The host selects Alpine or Pineglass and chooses Free Drive or the timed challenge. Internet play uses a separately hosted relay with a matching game revision. See [multiplayer setup](docs/MULTIPLAYER.md) for the hosted option.
 
 ## Default controls
 

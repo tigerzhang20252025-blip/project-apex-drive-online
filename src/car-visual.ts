@@ -9,13 +9,13 @@ import {Driver} from './driver.ts';
 import {Mirrors} from './mirrors.ts';
 import {asset} from './environment.ts';
 import {buildCabin,type Switch} from './f40-cabin.ts';
-import {lightFlags} from '../multiplayer-poc/src/game.ts';
+import {lightFlags} from '../shared/game.ts';
 import type {Vehicle} from './vehicle.ts';
 export type {Switch};
 export class CarVisual {
   readonly group=new T.Group();
   readonly eye=new T.Vector3(-.333,.990,.090);
-  readonly hood=new T.Vector3(0,.733,-1.39);
+  readonly hood=new T.Vector3(0,1.232,-.85);
   readonly hitTargets:T.Mesh[]=[];
   readonly wheels:Array<{pivot:T.Group;roller:T.Group}>=[];
   readonly mirrors=new Mirrors();

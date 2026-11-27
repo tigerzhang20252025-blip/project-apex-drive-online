@@ -2,8 +2,10 @@ import assert from 'node:assert/strict';
 import {mkdirSync, writeFileSync} from 'node:fs';
 import {launchTestBrowser} from './test-browser.mjs';
 
-const [url = 'http://127.0.0.1:4194/', output = 'test-evidence/production', vehicle = 'f40'] = process.argv.slice(2);
+const [url = 'http://127.0.0.1:4194/', output = 'test-evidence/production', vehicle = 'f40', course = 'alpine-proving-ground'] = process.argv.slice(2);
 assert.ok(vehicle === 'f40' || vehicle === 'r35');
+assert.ok(course==='alpine-proving-ground'||course==='pineglass-run-v2');
+const stageCourse=course==='pineglass-run-v2';
 mkdirSync(output, {recursive:true});
 const browser = await launchTestBrowser();
 const errors = [], resources = [];
@@ -42,11 +44,15 @@ try {
       await page.locator('[data-vehicle=r35]').click();
       await page.locator('#stage[data-vehicle=r35]').waitFor();
     }
+    if(stageCourse){
+      await page.locator('[data-course=pineglass-run-v2]').click();
+      await page.locator('#stage[data-track=pineglass-run-v2]').waitFor();
+    }
     await page.locator('#garage-drive').click();
   }
   assert.equal(await page.evaluate(() => typeof window.apexDiagnostics), 'undefined');
   assert.equal(await page.locator('#scene canvas').count(),1);
-  assert.match(await page.locator('#minimap').getAttribute('aria-label'),/5\.0\d+ km/);
+  assert.match(await page.locator('#minimap').getAttribute('aria-label'),stageCourse?/Pineglass Run 2\.0.*6\.554 km/:/Alpine Proving Ground.*5\.0\d+ km/);
   await page.screenshot({path:output+'/chase.jpg'});
   await page.locator('#ignition').click();
   await page.waitForFunction(() => Number(document.querySelector('#rpm')?.textContent) > 700);
@@ -78,7 +84,7 @@ try {
   await page.waitForFunction(previous => document.querySelector('#lap-current')?.textContent !== previous,telemetry['lap-current']);
   await page.screenshot({path:output+'/cockpit.jpg'});
   const model=vehicle==='r35'?'r35-rally.glb':'f40-road.glb';
-  for(const asset of [model,'driver/left.glb','driver/right.glb','alps.hdr','asphalt.jpg','pine-close.glb']) {
+  for(const asset of [model,'driver/left.glb','driver/right.glb','alps.hdr',stageCourse?'gravel-color.jpg':'asphalt.jpg','pine-close.glb']) {
     assert.ok(resources.some(r=>new URL(r.url).pathname.endsWith('/'+asset) && r.status < 400),asset);
   }
   assert.ok(resources.every(r => new URL(r.url).origin === new URL(url).origin), 'unexpected off-origin asset');

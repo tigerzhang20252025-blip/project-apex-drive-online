@@ -1,10 +1,11 @@
+import { defaultTrack, type TrackId } from '../../shared/tracks.ts';
 import { DurableObject } from 'cloudflare:workers';
-import { ackFrom, isSequence, jsonObject, maxFrameSize, poseFrom, protocol } from './protocol.ts';
-import { finishGraceMs, isCar, livePoseFrom, playerName } from './game.ts';
-import type { DriverProfile, Seat } from './game.ts';
-import { losePlayer, updateGame, viewGame } from './game-room.ts';
+import { ackFrom, isSequence, jsonObject, maxFrameSize, poseFrom, protocol } from '../../shared/protocol.ts';
+import { finishGraceMs, isCar, livePoseFrom, playerName } from '../../shared/game.ts';
+import type { DriverProfile, Seat } from '../../shared/game.ts';
+import { losePlayer, restoreGameCourse, updateGame, viewGame } from './game-room.ts';
 import type { GameState } from './game-room.ts';
-import type { Ack, Grant, ServerMessage } from './protocol.ts';
+import type { Ack, Grant, ServerMessage } from '../../shared/protocol.ts';
 
 const ticketMs = 30_000;
 const resumeMs = 45_000;
@@ -22,7 +23,7 @@ type Member = {
 };
 type State = { code: string; expires: number; members: Member[]; game?: GameState; gameTest?: boolean };
 type Attachment = { slot: Seat; generation: string };
-type Flow = { time: number; poses: number; controls: number; lastSeq: number; pending: Ack[] };
+type Flow = { time: number; poses: number; controls: number; excessControls: number; lastControlWarning: number; lastSeq: number; pending: Ack[] };
 
 const noRoom = () => Response.json({ error: 'Invalid or expired room code.' }, { status: 404 });
 
@@ -32,13 +33,19 @@ function matchesSecret(candidate: string, secret: string | null) {
 }
 
 export class Room extends DurableObject<Cloudflare.Env> {
-  private state = this.ctx.storage.kv.get<State>('room');
+  private state = this.loadState();
   private flows = new Map<WebSocket, Flow>();
 
-  async initialize(code: string, expires: number, profile?: Partial<DriverProfile>, gameTest?: boolean): Promise<Grant> {
+  private loadState() {
+    const state = this.ctx.storage.kv.get<State>('room');
+    if (state?.game && restoreGameCourse(state.game, state.members)) this.ctx.storage.kv.put('room', state);
+    return state;
+  }
+
+  async initialize(code: string, expires: number, profile?: Partial<DriverProfile>, gameTest?: boolean, track:TrackId=defaultTrack): Promise<Grant> {
     if (this.state || expires <= Date.now()) throw new Error('Room unavailable');
     this.state = { code, expires, members: [], gameTest,
-      game: profile ? { host: 1, mode: 'drive', session: null } : undefined };
+      game: profile ? { host: 1, mode: 'drive', session: null, track } : undefined };
     return this.addMember(1, Date.now(), profile);
   }
 
@@ -131,10 +138,16 @@ export class Room extends DurableObject<Cloudflare.Env> {
     const elapsed = Math.max(0, now - flow.time) / 1000;
     flow.time = now;
     flow.poses = Math.min(12, flow.poses + elapsed * 20);
-    flow.controls = Math.min(8, flow.controls + elapsed * (room.game ? 5 : 1));
+    flow.controls = Math.min(room.game ? 16 : 8, flow.controls + elapsed * (room.game ? 5 : 1));
+    flow.excessControls = Math.max(0, flow.excessControls - elapsed * 6);
     const bucket = message.type === 'snapshot' ? 'poses' : 'controls';
     if (flow[bucket] < 1) {
-      this.disconnect(socket, 1008, 'Message rate exceeded');
+      if (!room.game || bucket === 'poses' || ++flow.excessControls >= 64) {
+        this.disconnect(socket, 1008, 'Message rate exceeded');
+      } else if (now - flow.lastControlWarning >= 1000) {
+        flow.lastControlWarning = now;
+        this.send(socket, {type:'game_error',message:'Slow down a moment.'});
+      }
       return;
     }
     flow[bucket]--;
@@ -161,7 +174,7 @@ export class Room extends DurableObject<Cloudflare.Env> {
         for (const peer of this.openSockets()) if (peer !== socket) this.send(peer, change.notice);
       }
       if (change.persist) {
-        if (message.type !== 'lap') room.game.lobbyChanges = (room.game.lobbyChanges ?? 0) + 1;
+        if (message.type !== 'lap' && message.type !== 'stage') room.game.lobbyChanges = (room.game.lobbyChanges ?? 0) + 1;
         this.save();
         this.announce();
       }
@@ -330,7 +343,7 @@ export class Room extends DurableObject<Cloudflare.Env> {
   private flow(socket: WebSocket, now: number) {
     let flow = this.flows.get(socket);
     if (!flow) {
-      flow = { time: now, poses: 12, controls: 4, lastSeq: 0, pending: [] };
+      flow = { time: now, poses: 12, controls: this.state?.game ? 8 : 4, excessControls: 0, lastControlWarning: 0, lastSeq: 0, pending: [] };
       this.flows.set(socket, flow);
     }
     return flow;

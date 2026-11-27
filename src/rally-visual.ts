@@ -12,7 +12,7 @@ import {buildRallyTrim,buildRearOptics,carbonUV,finishNose,fitFuelDoor,fitRearBa
 import {rallyWheelSet} from './rally-wheel.ts';
 import {buildRallyCabin} from './rally-cabin.ts';
 import {rallyControlHints} from './rally-controls.ts';
-import {lightFlags} from '../multiplayer-poc/src/game.ts';
+import {lightFlags} from '../shared/game.ts';
 import type {Vehicle} from './vehicle.ts';
 import type {Switch} from './f40-cabin.ts';
 import type {VehicleVisual} from './vehicle-visual.ts';

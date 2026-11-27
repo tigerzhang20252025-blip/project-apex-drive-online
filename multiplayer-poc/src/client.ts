@@ -1,6 +1,6 @@
 import { Measurements } from './measurements.ts';
-import { isRate, protocol } from './protocol.ts';
-import type { Ack, Grant, Pose, Rate, Relay, ServerMessage } from './protocol.ts';
+import { isRate, protocol } from '../../shared/protocol.ts';
+import type { Ack, Grant, Pose, Rate, Relay, ServerMessage } from '../../shared/protocol.ts';
 
 function byId<T extends HTMLElement = HTMLElement>(id: string) {
   return document.getElementById(id) as T;

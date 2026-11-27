@@ -1,17 +1,20 @@
 import type { Scene } from 'three';
 import {
   finishGraceMs, gameVersion, isCar, isMode,
-} from '../multiplayer-poc/src/game.ts';
+} from '../shared/game.ts';
 import type {
-  CarId, GameCommand, LiveRoom, Player, Progress, Result, Seat, Session, Splits, VehicleSample,
-} from '../multiplayer-poc/src/game.ts';
-import { protocol } from '../multiplayer-poc/src/protocol.ts';
-import type { Ack, Grant, ServerMessage } from '../multiplayer-poc/src/protocol.ts';
+  CarId, CompletionCommand, GameCommand, LiveRoom, Player, Progress, Result, Seat, Session, Splits, VehicleSample,
+} from '../shared/game.ts';
+import { attemptName, challengeName, defaultTrack, isTrackId, trackIdentities, type TrackId, type TrackIdentity } from '../shared/tracks.ts';
+import { protocol } from '../shared/protocol.ts';
+import type { Ack, Grant, ServerMessage } from '../shared/protocol.ts';
 import { lapTime, sectorTime } from './lap-timing.ts';
 import { RemoteCar } from './remote-car.ts';
 import { vehicles } from './vehicle-registry.ts';
 
 const sendPeriod = 1000 / 15;
+const disconnectGraceMs = 4_000;
+const completionRetryMs = 250;
 const byId = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const text = (element: HTMLElement, value: string) => { if (element.textContent !== value) element.textContent = value; };
 const dateAt = () => performance.timeOrigin + performance.now();
@@ -19,9 +22,11 @@ const dateAt = () => performance.timeOrigin + performance.now();
 type Callbacks = {
   vehicle: () => CarId;
   changeVehicle: (car: CarId) => Promise<void>;
+  track: () => TrackIdentity;
+  changeTrack: (id:TrackId) => Promise<boolean>;
   enter: (session: Session, slot: Seat) => void;
   exit: () => void;
-  interrupted: (reason: string) => void;
+  interrupted: (expired?:boolean) => void;
   unlockAudio: () => void;
 };
 
@@ -52,6 +57,8 @@ export class Multiplayer {
   private disconnectedAt = 0;
   private nextSend = 0;
   private nextTiming = 0;
+  private nextCompletion = 0;
+  private lastLobbyControl = new Map<GameCommand['type'], number>();
   private connectTimer?: number;
   private pingTimer?: number;
   private retryTimer?: number;
@@ -66,7 +73,9 @@ export class Multiplayer {
   private selecting = false;
   private active?: string;
   private progress?: Progress;
-  private laps: Array<Extract<GameCommand, { type: 'lap' }>> = [];
+  private completions:CompletionCommand[] = [];
+  private loadingTrack=false;
+  private trackFailed=false;
   private resultsKey = '';
   private lobby = byId('online-lobby');
   private status = byId('online-status');
@@ -89,13 +98,24 @@ export class Multiplayer {
     }
     for (const id of ['online-end', 'online-return']) byId(id).addEventListener('click', () => this.command({type:'lobby'}));
     byId('online-start').addEventListener('click', () => this.command({type:'start'}));
+    const course=byId<HTMLSelectElement>('online-track');
+    for(const track of Object.values(trackIdentities)){
+      course.add(new Option(track.name,track.id));
+    }
+    course.addEventListener('change',()=>{
+      if(isTrackId(course.value))this.command({type:'track',track:course.value});
+    });
     byId('online-ready').addEventListener('click', () => {
-      if (this.remote.failed && this.peer) {
+      if(this.trackFailed){
+        this.trackFailed=false;
+        void this.loadRoomTrack();
+      }else if (this.remote.failed && this.peer) {
         this.remote.select(this.peer.vehicle);
         this.renderLobby();
-      } else if (this.self) {
+      } else if (this.self && this.courseMatches()) {
+        const {id,revision}=this.callbacks.track();
         if(!this.self.ready)this.callbacks.unlockAudio();
-        this.command({type:'ready', ready:!this.self.ready});
+        this.command({type:'ready', ready:!this.self.ready, track:id, revision});
       }
     });
     byId<HTMLSelectElement>('online-mode').addEventListener('change', event => {
@@ -111,8 +131,12 @@ export class Multiplayer {
   get isOpen() { return this.opened; }
   get session() { return this.state?.session ?? null; }
   get mode() { return this.state?.mode; }
+  get track() { return this.state?.track ?? this.callbacks.track(); }
   get slot() { return this.seat; }
   get connected() { return this.online; }
+  get timingConnectionExpired() {
+    return this.mode === 'challenge' && this.disconnectedAt !== 0 && dateAt() - this.disconnectedAt >= disconnectGraceMs;
+  }
   get prestart() { return !!this.session && this.serverNow() < this.session.starts; }
   get finished() { return this.session?.ends != null && this.serverNow() >= this.session.ends; }
   get diagnostics() {
@@ -169,7 +193,7 @@ export class Multiplayer {
     this.notify(path === 'create' ? 'Creating private room…' : 'Joining room…');
     this.renderLobby();
     try {
-      const grant = await this.request(path, { gameVersion, vehicle: this.callbacks.vehicle(),
+      const grant = await this.request(path, { gameVersion, vehicle: this.callbacks.vehicle(), track:this.callbacks.track().id,
         name: byId<HTMLInputElement>('online-name').value, code: byId<HTMLInputElement>('online-code-input').value });
       if (this.serial !== serial) return;
       this.grant = grant;
@@ -210,11 +234,12 @@ export class Multiplayer {
   private message(message: ServerMessage) {
     switch (message.type) {
       case 'welcome':
+        if(this.timingConnectionExpired)this.callbacks.interrupted(true);
         this.online = true;
         this.retry = this.disconnectedAt = 0;
         this.seat = message.slot as Seat;
         this.seq = 0;
-        this.nextSend = this.nextTiming = 0;
+        this.nextSend = this.nextTiming = this.nextCompletion = 0;
         this.ack = undefined;
         this.ping = undefined;
         this.lastPong = dateAt();
@@ -269,8 +294,49 @@ export class Multiplayer {
     }
   }
 
+  private courseMatches(course=this.state?.track) {
+    const local=this.callbacks.track();
+    return !!course && course.id===local.id && course.revision===local.revision;
+  }
+
+  private enterReadySession(){
+    const session=this.session;
+    if(!session||session.id===this.active||!this.seat||!this.courseMatches(session.track))return;
+    this.active=session.id;
+    this.completions=[];
+    this.progress=undefined;
+    this.remote.clear();
+    this.callbacks.enter(session,this.seat);
+    this.resultsKey='';
+    this.trackMessageUntil=0;
+  }
+
+  private async loadRoomTrack(){
+    const wanted=this.state?.track;
+    if(!wanted||this.loadingTrack||this.selecting||this.trackFailed||this.courseMatches(wanted))return;
+    if(trackIdentities[wanted.id]?.revision!==wanted.revision){
+      this.trackFailed=true;
+      this.notify('Course revision mismatch. Reload the same game build as the host.');
+      return;
+    }
+    this.loadingTrack=true;
+    this.renderLobby();
+    const loaded=await this.callbacks.changeTrack(wanted.id);
+    this.loadingTrack=false;
+    const latest=this.state?.track;
+    if(!latest)return;
+    if(latest.id!==wanted.id||latest.revision!==wanted.revision){
+      void this.loadRoomTrack();
+    }else if(!loaded){
+      this.trackFailed=true;
+      this.notify('Could not load '+wanted.name+'. Retry the course to ready up.');
+    }else this.enterReadySession();
+    this.renderLobby();this.renderTrack();
+  }
+
   private updateRoom(state: LiveRoom) {
     const previous = this.peer;
+    if(this.state?.track.id!==state.track.id || this.state.track.revision!==state.track.revision)this.trackFailed=false;
     this.state = state;
     const peer = this.peer;
     if (!peer?.connected && previous?.connected) {
@@ -278,25 +344,18 @@ export class Multiplayer {
       this.progress = undefined;
     }
     if (peer?.vehicle !== previous?.vehicle) this.remote.select(peer?.vehicle);
-    const session = state.session;
-    if (session && session.id !== this.active && this.seat) {
-      this.active = session.id;
-      this.laps = [];
-      this.progress = undefined;
-      this.remote.clear();
-      this.callbacks.enter(session, this.seat);
-      this.resultsKey = '';
-      this.trackMessageUntil = 0;
-    } else if (!session && this.active) {
+    if (!state.session && this.active) {
       this.active = undefined;
-      this.laps = [];
+      this.completions = [];
       this.remote.clear();
       this.callbacks.exit();
     }
-    if (this.self && session) {
-      const own = session.results.find(result => result.slot === this.seat)?.laps ?? 0;
-      this.laps = this.laps.filter(lap => lap.number > own);
+    this.enterReadySession();
+    if (this.self && state.session) {
+      const own = state.session.results.find(result => result.slot === this.seat)?.laps ?? 0;
+      this.completions = this.completions.filter(attempt => attempt.number > own);
     }
+    void this.loadRoomTrack();
     this.renderLobby();
     this.renderTrack();
   }
@@ -316,7 +375,7 @@ export class Multiplayer {
     if (!this.stayOpen || !this.grant) return;
     if (!this.disconnectedAt) {
       this.disconnectedAt = dateAt();
-      this.callbacks.interrupted('Connection interrupted');
+      this.callbacks.interrupted();
     }
     this.remote.clear();
     this.notify('Connection interrupted. Reconnecting…');
@@ -374,6 +433,14 @@ export class Multiplayer {
   }
 
   private command(message: GameCommand) {
+    if (message.type === 'ready' || message.type === 'mode' || message.type === 'track') {
+      const now = performance.now();
+      if (now - (this.lastLobbyControl.get(message.type) ?? -Infinity) < 220) {
+        this.renderLobby();
+        return;
+      }
+      this.lastLobbyControl.set(message.type, now);
+    }
     if (!this.online || !this.send(message)) {
       const error = 'The room is reconnecting. Try again shortly.';
       this.notify(error);
@@ -382,7 +449,7 @@ export class Multiplayer {
   }
 
   async changeVehicle(id: CarId) {
-    if (this.selecting || !this.online || this.session) return;
+    if (this.selecting || this.loadingTrack || !this.online || this.session) return;
     this.selecting = true;
     this.renderLobby();
     try {
@@ -391,15 +458,22 @@ export class Multiplayer {
       else this.notify('Could not load the selected vehicle.');
     } finally {
       this.selecting = false;
+      void this.loadRoomTrack();
       this.renderLobby();
     }
   }
 
-  submitLap(number: number, splits: Splits) {
+  submitAttempt(number: number, splits: Splits, completedAt=this.serverNow()):boolean {
     const session = this.session;
-    if (!session || this.finished || !this.online) return;
-    this.laps.push({type:'lap', session:session.id, completedAt:Math.round(this.serverNow()), number, splits});
-    this.send(this.laps.at(-1)!);
+    const end = session?.ends ?? Infinity;
+    if (!session || session.id !== this.active || completedAt < session.starts ||
+        completedAt > end || this.serverNow() > end + finishGraceMs) return false;
+    const attempt:CompletionCommand={type:attemptName(session.track),session:session.id,revision:session.track.revision,
+      completedAt:Math.round(completedAt),number,splits};
+    if (this.completions.push(attempt) === 1 && this.send(attempt)) {
+      this.nextCompletion=performance.now()+completionRetryMs;
+    }
+    return true;
   }
 
   tick(now: number, dt: number, sample: () => VehicleSample, timing: () => Progress) {
@@ -412,7 +486,13 @@ export class Multiplayer {
     }
     const serverNow = this.serverNow();
     this.remote.draw(serverNow, dt);
-    if (!this.online || (session.ends !== null && serverNow >= session.ends)) return;
+    if (!this.online) return;
+    const end=session.ends??Infinity;
+    if (this.completions[0] && serverNow <= end + finishGraceMs && now >= this.nextCompletion) {
+      this.send(this.completions[0]);
+      this.nextCompletion=now+completionRetryMs;
+    }
+    if (serverNow >= end) return;
     if (now >= this.nextSend) {
       const socket = this.socket;
       if (socket?.readyState === WebSocket.OPEN && socket.bufferedAmount < 2048) {
@@ -423,7 +503,6 @@ export class Multiplayer {
       this.nextSend = this.nextSend < now - sendPeriod ? now + sendPeriod : this.nextSend + sendPeriod;
     }
     if (serverNow >= session.starts && now >= this.nextTiming) {
-      if (this.laps[0]) this.send(this.laps[0]);
       this.send({type:'timing',session:session.id,progress:timing()});
       this.nextTiming = now + 1000;
     }
@@ -441,7 +520,8 @@ export class Multiplayer {
     this.closeSocket();
     this.grant = this.state = this.clock = this.clockTarget = this.seat = this.progress = this.active = undefined;
     this.minRtt = Infinity;
-    this.laps = [];
+    this.completions = [];
+    this.trackFailed=false;
     this.remote.dispose();
     if (wasPlaying) this.callbacks.exit();
     this.notify(message);
@@ -481,17 +561,22 @@ export class Multiplayer {
     byId('online-drivers').replaceChildren(...rows);
     const field = byId<HTMLSelectElement>('online-vehicle');
     field.value = this.selecting ? this.callbacks.vehicle() : this.self?.vehicle ?? this.callbacks.vehicle();
-    field.disabled = !this.online || this.selecting || Boolean(this.session);
+    field.disabled = !this.online || this.selecting || this.loadingTrack || Boolean(this.session);
+    const course=byId<HTMLSelectElement>('online-track');
+    course.value=this.state?.track?.id??defaultTrack;
+    course.disabled=!this.online||!this.isHost||Boolean(this.session);
     const mode = byId<HTMLSelectElement>('online-mode');
+    text(mode.options[1],challengeName(this.track));
     mode.value = this.mode ?? 'drive';
     mode.disabled = !this.online || !this.isHost || Boolean(this.session);
     const ready = byId<HTMLButtonElement>('online-ready');
-    text(ready,this.remote.failed ? 'Retry model' : this.self?.ready ? 'Unready' : this.peer && !this.remote.ready ? 'Loading car…' : 'Ready');
+    text(ready,this.trackFailed?'Retry course':!this.courseMatches()?'Loading course…':this.remote.failed?'Retry model':
+      this.self?.ready?'Unready':this.peer&&!this.remote.ready?'Loading car…':'Ready');
     ready.disabled = !this.online || !this.clock || this.selecting || Boolean(this.session) || !this.peer?.connected ||
-      (!this.remote.ready && !this.remote.failed);
+      (!this.courseMatches()&&!this.trackFailed)||this.loadingTrack||(!this.remote.ready&&!this.remote.failed&&!this.trackFailed);
     const start = byId<HTMLButtonElement>('online-start');
     start.hidden = !this.isHost;
-    start.disabled = !this.online || players.length !== 2 || players.some(player => !player.ready || !player.connected) || Boolean(this.session);
+    start.disabled = !this.online || players.length !== 2 || players.some(player => !player.ready || !player.connected) || !this.courseMatches() || Boolean(this.session);
   }
 
   renderTrack() {
@@ -504,11 +589,13 @@ export class Multiplayer {
     end.hidden = !this.active || !session || session.ends === null || now < session.ends + finishGraceMs;
     if (!session || !this.active) return;
     this.updateConnection();
-    text(byId('online-mode-label'),this.mode === 'challenge' ? 'Best Lap Challenge' : 'Free Drive');
+    const attempt=attemptName(session.track);
+    text(byId('online-mode-label'),this.mode==='challenge'?challengeName(session.track):'Free Drive');
+    text(byId('online-results-mode'),challengeName(session.track).toUpperCase());
     text(byId('online-clock'),now < session.starts ? 'Starts in ' + Math.max(1,Math.ceil((session.starts - now)/1000)) :
       session.ends === null ? 'On track' : now >= session.ends ? 'Session complete' :
         Math.floor(Math.ceil((session.ends-now)/1000)/60) + ':' + String(Math.ceil((session.ends-now)/1000)%60).padStart(2,'0') + ' remaining');
-    byId('online-end').hidden = !this.isHost || this.mode !== 'drive';
+    byId('online-end').hidden = !this.isHost;
     byId<HTMLButtonElement>('online-return').disabled = !this.online;
     const other = session.results.find(result => result.slot !== this.seat);
     const own = session.results.find(result => result.slot === this.seat);
@@ -517,7 +604,7 @@ export class Multiplayer {
       elapsedText(Math.abs(other.best-own.best)) : '';
     text(byId('online-opponent'), other ?
       other.name + (this.peer?.connected ? '' : this.peer ? ' · Reconnecting' : ' · Left room') + ' · Best ' + elapsedText(other.best) + delta +
-      '\n' + (timing?.invalid ? 'Invalid lap' : timing?.ms == null ? 'Awaiting a timed lap' :
+      '\n' + (timing?.invalid ? 'Invalid '+attempt : timing?.complete ? 'Stage complete' : timing?.ms == null ? 'Awaiting a timed '+attempt :
         'Sector ' + (timing.sector+1) + ' · ' + elapsedText(timing.ms)) +
       '\n' + splitText(timing?.splits ?? other.bestLap ?? undefined) : 'Waiting for an opponent');
     if (!end.hidden) {
@@ -530,6 +617,7 @@ export class Multiplayer {
     const key = JSON.stringify(session.results);
     if (key === this.resultsKey) return;
     this.resultsKey = key;
+    const attempt=attemptName(session.track);
     const results = [...session.results].sort((a,b) => (a.best ?? Infinity) - (b.best ?? Infinity));
     const winning = results[0]?.best;
     byId('online-results').replaceChildren(...results.map((result,index) => {
@@ -541,9 +629,9 @@ export class Multiplayer {
       const rank = result.best === null ? '—' : result.best === winning ? '1' : String(index+1);
       head.textContent = rank + ' · ' + result.name + ' · ' + elapsedText(result.best) +
         (winning != null && result.best != null && result.best > winning ? ' (+' + elapsedText(result.best - winning) + ')' : '');
-      times.textContent = vehicles[result.vehicle].name + ' · ' + result.laps + (result.laps===1?' valid lap':' valid laps') +
+      times.textContent = vehicles[result.vehicle].name + ' · ' + result.laps + ' valid '+attempt+(result.laps===1?'':'s') +
         ' · Theoretical ' + elapsedText(theo(result));
-      splits.textContent = 'Best lap  ' + splitText(result.bestLap ?? undefined);
+      splits.textContent = 'Best '+attempt+'  ' + splitText(result.bestLap ?? undefined);
       const sectors = document.createElement('small');
       sectors.textContent = 'Best sectors  ' + splitText(result.sectors);
       row.append(head,times,splits,sectors);

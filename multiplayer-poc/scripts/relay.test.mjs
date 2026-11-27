@@ -3,6 +3,7 @@ import { mkdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import test from 'node:test';
+import { maxFrameSize } from '../../shared/protocol.ts';
 import { launchTestBrowser } from '../../scripts/test-browser.mjs';
 
 const base = 'http://127.0.0.1:8788';
@@ -119,7 +120,7 @@ test('origin check, one-time WebSocket tickets, bounded frames and rate caps', {
   const browser = await launchTestBrowser();
   try {
     const page = await visit(browser, base);
-    const result = await page.evaluate(async () => {
+    const result = await page.evaluate(async oversizeBytes => {
       const post = (path, data) => fetch(path, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data),
       }).then(response => response.json());
@@ -138,7 +139,7 @@ test('origin check, one-time WebSocket tickets, bounded frames and rate caps', {
       if (!await initial.open) throw new Error('Initial ticket failed');
       const replay = openSocket(grant.ticket);
       const replayOpened = await replay.open;
-      initial.socket.send('x'.repeat(513));
+      initial.socket.send('x'.repeat(oversizeBytes));
       const oversize = await initial.closeCode;
       const renewed = await post('/api/resume', { roomId: grant.roomId, resume: grant.resume });
       const flood = openSocket(renewed.ticket);
@@ -155,7 +156,7 @@ test('origin check, one-time WebSocket tickets, bounded frames and rate caps', {
         await last.closeCode;
       }
       return { replayOpened, oversize, rateLimit };
-    });
+    }, maxFrameSize+1);
     assert.deepEqual(result, { replayOpened: false, oversize: 1009, rateLimit: 1008 });
   } finally {
     await browser.close();

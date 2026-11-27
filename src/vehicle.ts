@@ -1,8 +1,9 @@
-import {rallyModes,surfaces,wheelTelemetry} from './rally-dynamics.ts';
+import {rallyModes,surfaceFor,surfaces,wheelTelemetry} from './rally-dynamics.ts';
 import {WiperMotor} from './wiper.ts';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { Quaternion, Vector3 } from 'three';
 import { grid, gridRotation } from './track.ts';
+import type { TrackSpawn } from './tracks.ts';
 
 import { sport, interpolate, drivingAssists, type AssistMode, type VehicleSpec } from './vehicle-spec.ts';
 export { sport } from './vehicle-spec.ts';
@@ -75,9 +76,11 @@ export class Vehicle {
 
   readonly world: RAPIER.World;
   readonly spec: VehicleSpec;
-  constructor(world: RAPIER.World, spec: VehicleSpec = sport) {
+  private readonly spawn: TrackSpawn;
+  constructor(world: RAPIER.World, spec: VehicleSpec = sport, spawn: TrackSpawn = { position:grid, rotation:gridRotation }) {
     this.world = world;
     this.spec = spec;
+    this.spawn = spawn;
     this.fuelLitres = spec.fuel.capacityLitres;
     this.body = world.createRigidBody(RAPIER.RigidBodyDesc.dynamic()
       .setLinearDamping(.018).setAngularDamping(.32).setCanSleep(false).setCcdEnabled(true));
@@ -178,9 +181,9 @@ export class Vehicle {
     this.shiftTime = target > 0 ? this.spec.shiftCut : .10;
   }
 
-  reset(restart = false, spawn = grid) {
+  reset(restart = false, spawn = this.spawn.position, rotation = this.spawn.rotation) {
     this.body.setTranslation({ x: spawn.x, y: spawn.y + this.spec.bodyOrigin + .035, z: spawn.z }, true);
-    this.body.setRotation(gridRotation, true);
+    this.body.setRotation(rotation, true);
     this.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
     this.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
     this.body.resetForces(true);
@@ -340,7 +343,7 @@ export class Vehicle {
     const direction = Math.sign(this.steer);
     this.tcActive = false;
     this.absActive = false;
-    if(spec.awd)this.tireTelemetry.forEach((_,i)=>{this.tireTelemetry[i]=wheelTelemetry(this,i);});
+    if(spec.awd || this.spawn.surface)this.tireTelemetry.forEach((_,i)=>{this.tireTelemetry[i]=wheelTelemetry(this,i);});
     if (spec.awd) {
       // A rear-biased virtual clutch transfers torque when the rear tires are loaded
       // laterally, have reduced surface grip or lose contact. Torque is conserved.
@@ -358,25 +361,31 @@ export class Vehicle {
       const transfer=Math.min(1,this.pedal*.55*(1-Math.min(1,stableSpeed/31))+(rearLoose*.76+rearUse*.64+rearSlip*.7+yawError*.12)*this.pedal)*frontContact;
       this.frontTorqueShare=ramp(this.frontTorqueShare,spec.awd.baseFront+(spec.awd.maxFront-spec.awd.baseFront)*transfer*rallyModes[this.assistMode].transfer,spec.awd.transferRate,dt);
     }
-    let frontDrive=0,rearDrive=0;
+    let frontDrive=0,rearDrive=0,extraRolling=0;
     for (let i = 0; i < spec.wheels.length; i++) {
       const wheel = spec.wheels[i];
-      const onGrass = (controller.wheelGroundObject(i)?.friction() ?? 1) < .5;
+      const ground=controller.wheelGroundObject(i);
+      const friction=ground?.friction() ?? 1;
+      const surface=this.spawn.surface?.[surfaceFor(friction)];
       const baseGrip=wheel.front?spec.tires.frontGrip:spec.tires.rearGrip;
-      let effectiveGrip=onGrass?spec.tires.grassGrip:baseGrip;
+      let effectiveGrip=surface?baseGrip*surface.rwdGrip:friction<.5?spec.tires.grassGrip:baseGrip;
+      if(this.spawn.surface){
+        controller.setWheelSideFrictionStiffness(i,(wheel.front?spec.tires.frontSide:spec.tires.rearSide)*(surface?.lateral??1));
+        if(ground&&surface)extraRolling+=surface.rolling/spec.wheels.length;
+      }
       if(spec.awd){
         const state=this.tireTelemetry[i],mode=rallyModes[this.assistMode];
         // Continuous post-peak envelope, with Rapier retaining all tire impulse solving.
         const sliding=1-Math.exp(-Math.max(0,state.slipAngle-.075)*3.2);
         const loadFactor=Math.max(.91,Math.min(1.04,1-.045*(state.load/(spec.mass*9.81/4)-1)));
-        const target=baseGrip*surfaces[state.surface].grip*(1-(1-mode.slide)*sliding)*loadFactor;
+        const target=baseGrip*(surface?.awdGrip??surfaces[state.surface].grip)*(1-(1-mode.slide)*sliding)*loadFactor;
         this.tireGrip[i]=ramp(this.tireGrip[i],target,14,dt);effectiveGrip=this.tireGrip[i];
       }
       controller.setWheelFrictionSlip(i,effectiveGrip);
       const frontSteering = direction * Math.atan(wheelbase / (radius + direction * wheel.x));
       controller.setWheelSteering(i, wheel.front ? frontSteering : 0);
       // Rapier's tangential brake value is a per-step impulse cap, in N·s.
-      let wheelBrake = brake * (wheel.front ? spec.brakes.frontTorque : spec.brakes.rearTorque) / spec.radius * dt;
+      let wheelBrake = brake * (surface?.braking??1) * (wheel.front ? spec.brakes.frontTorque : spec.brakes.rearTorque) / spec.radius * dt;
       const normalLoad=controller.wheelSuspensionForce(i) ?? 0;
       const grip = normalLoad * effectiveGrip;
       const lateral = Math.min(grip, Math.abs(controller.wheelSideImpulse(i) ?? 0) / dt);
@@ -387,7 +396,7 @@ export class Vehicle {
         wheelBrake=Math.min(wheelBrake,limit);
       }
       controller.setWheelBrake(i, wheelBrake + coast + (wheel.front ? 0 : engineBrake + (handbrake || parking ? spec.brakes.handbrakeTorque / spec.radius * dt : 0)));
-      let drive = engineForce * .5 * (wheel.front ? this.frontTorqueShare : 1-this.frontTorqueShare);
+      let drive = engineForce * (surface?.drive??1) * .5 * (wheel.front ? this.frontTorqueShare : 1-this.frontTorqueShare);
       if (this.tractionControl && (wheel.front ? Boolean(spec.awd) : true) && controller.wheelIsInContact(i)) {
         this.tcActive ||= Math.abs(drive) > available + 30;
         drive = Math.sign(drive) * Math.min(Math.abs(drive), available);
@@ -400,7 +409,7 @@ export class Vehicle {
     this.blink = Math.floor(this.time / .37) % 2 === 0;
     // Drag force acceleration is applied through an impulse, avoiding accumulated user forces.
     const drag = .5 * spec.aero.airDensity * spec.aero.dragArea * this.speed;
-    const rolling = spec.aero.rollingCoefficient * spec.mass * 9.81 / Math.max(2, this.speed);
+    const rolling = (spec.aero.rollingCoefficient + extraRolling) * spec.mass * 9.81 / Math.max(2, this.speed);
     this.body.applyImpulse(this.dragImpulse.set(this.velocity.x, 0, this.velocity.z).multiplyScalar(-(drag + rolling) * dt), true);
     if (this.running) {
       const kW = torque * this.rpm * Math.PI / 30000;

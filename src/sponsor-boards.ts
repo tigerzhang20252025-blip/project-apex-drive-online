@@ -31,7 +31,7 @@ function printMaterial(design:typeof sponsors[number]){
   return new T.MeshStandardMaterial({map:texture,roughness:.80,metalness:.06,polygonOffset:true,polygonOffsetFactor:-2,polygonOffsetUnits:-2});
 }
 
-export function addSponsorBoards(scene:T.Scene,groundY:(x:number,z:number)=>number){
+export function addSponsorBoards(scene:T.Object3D,groundY:(x:number,z:number)=>number){
   const colors=sponsors.map(printMaterial);
   const galvanized=new T.MeshStandardMaterial({color:0x687274,metalness:.74,roughness:.45});
   function board(name:string,station:Station,offset:number,width:number,height:number,mat:number,attached=false,wallFacing?:number){
