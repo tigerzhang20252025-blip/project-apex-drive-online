@@ -58,7 +58,7 @@ function sectorPlateMaterial(label:string){
 // intermediate gates checked by LapTiming without altering track physics or cluttering HUD.
 // Sector boundary gates (G07 -> S1 end, G14 -> S2 end) carry double inner-edge ticks and
 // compact matte S1/S2 plates mounted on the existing timing posts.
-export function placeCheckpointMarkers(scene:T.Scene,wear?:RoadWear){
+export function placeCheckpointMarkers(scene:T.Object3D,wear?:RoadWear){
   const group=new T.Group();
   group.name='Checkpoint markers';
   const markers:Array<{index:number;distance:number;lateralOffset:number;sectorEnd:number|null;position:number[]}>=[];

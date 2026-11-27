@@ -38,7 +38,7 @@ export class StartSignal {
   reset(){this.phase='idle';this.count=0;this.elapsed=0;}
 }
 
-export function installStartingGantry(scene:T.Scene){
+export function installStartingGantry(scene:T.Object3D){
   const tower=new T.Group();
   tower.name='Apex start gantry';tower.position.copy(startLine.p);
   tower.rotation.y=Math.atan2(-startLine.forward.x,-startLine.forward.z);

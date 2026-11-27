@@ -1,6 +1,7 @@
+import type { TrackId, TrackIdentity } from './tracks.ts';
 import type { Pose } from './protocol.ts';
 
-export const gameVersion = 'apex-drive-alpine-g7-g14-1';
+export const gameVersion = 'apex-drive-courses-2';
 export const countdownMs = 5_000;
 export const challengeMs = 600_000;
 export const finishGraceMs = 1_500;
@@ -16,12 +17,16 @@ export type Result = {
   slot: Seat; name: string; vehicle: CarId; laps: number;
   best: number | null; last: number | null; bestLap: Splits | null; sectors: PartialSplits;
 };
-export type Session = { id: string; starts: number; ends: number | null; results: Result[] };
-export type LiveRoom = { type: 'game'; host: Seat; mode: SessionMode; players: Player[]; session: Session | null };
-export type Progress = { sector: 0 | 1 | 2; ms: number | null; splits: PartialSplits; invalid: boolean };
+export type Session = { id: string; starts: number; ends: number | null; track: TrackIdentity; results: Result[] };
+export type LiveRoom = { type: 'game'; host: Seat; mode: SessionMode; track: TrackIdentity; players: Player[]; session: Session | null };
+export type Progress = { sector: 0 | 1 | 2; ms: number | null; splits: PartialSplits; invalid: boolean; complete?: boolean };
+export type DustRates = [number, number, number, number];
+export const maxDustRate = 80;
+
 export type LivePose = {
   session: string; reset: number; steering: [number, number]; wheels: [number, number, number, number];
   suspension: [number, number, number, number]; flags: number; progress: number;
+  dust?: DustRates;
 };
 export type GameNotice =
   | LiveRoom
@@ -30,10 +35,15 @@ export type GameNotice =
 export type GameCommand =
   | { type: 'profile'; name: string; vehicle: CarId }
   | { type: 'mode'; mode: SessionMode }
-  | { type: 'ready'; ready: boolean }
+  | { type: 'track'; track: TrackId }
+  | { type: 'ready'; ready: boolean; track: TrackId; revision: string }
   | { type: 'start' | 'lobby' }
   | { type: 'timing'; session: string; progress: Progress }
-  | { type: 'lap'; session: string; number: number; completedAt: number; splits: Splits };
+  | CompletionCommand;
+
+export type CompletionCommand = {
+  type: 'lap'|'stage'; session: string; revision: string; number: number; completedAt: number; splits: Splits;
+};
 
 export type VehicleSample = Omit<Pose, 'seq' | 't' | 'rate'> & Omit<LivePose, 'session'>;
 export const lightFlags = { brake: 1, lights: 2, auxiliary: 4, reverse: 8, left: 16, right: 32 } as const;
@@ -56,11 +66,12 @@ export const validSplits = (value: unknown): value is Splits =>
 
 export function progressFrom(value: unknown): Progress | undefined {
   if (!value || typeof value !== 'object') return;
-  const { sector, ms, splits, invalid } = value as Partial<Progress>;
+  const { sector, ms, splits, invalid, complete } = value as Partial<Progress>;
   if ((sector !== 0 && sector !== 1 && sector !== 2) || typeof invalid !== 'boolean' ||
+      (complete !== undefined && typeof complete !== 'boolean') ||
       (ms !== null && !bounded(ms, 0, 3_600_000)) || !Array.isArray(splits) ||
       splits.length !== 3 || !splits.every(item => item === null || bounded(item, 0, 3_600_000))) return;
-  return { sector, ms, splits: [...splits], invalid };
+  return { sector, ms, splits: [...splits], invalid, complete };
 }
 
 export function livePoseFrom(value: unknown, session: string): LivePose | undefined {
@@ -70,6 +81,8 @@ export function livePoseFrom(value: unknown, session: string): LivePose | undefi
       !tuple(p.steering, 2, -1.5, 1.5) || !tuple(p.wheels, 4, -2_000_000, 2_000_000) ||
       !tuple(p.suspension, 4, 0, 2) || !bounded(p.flags, 0, 63) || !Number.isSafeInteger(p.flags) ||
       !bounded(p.progress, 0, 1)) return;
+  const dust = p.dust;
+  if (dust !== undefined && (!tuple(dust, 4, 0, maxDustRate) || !dust.every(Number.isInteger))) return;
   return { session, reset: p.reset, steering: p.steering!, wheels: p.wheels!, suspension: p.suspension!,
-    flags: p.flags, progress: p.progress };
+    flags: p.flags, progress: p.progress, ...(dust === undefined ? {} : { dust }) };
 }

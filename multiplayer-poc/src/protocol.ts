@@ -6,7 +6,7 @@ export type Rate = typeof rates[number];
 export const roomCodePattern = /^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{8}$/;
 export const tokenPattern = /^[a-f\d]{8}(?:-[a-f\d]{4}){3}-[a-f\d]{12}$/;
 export const objectIdPattern = /^[a-f\d]{64}$/;
-export const maxFrameSize = 512;
+export const maxFrameSize = 1024;
 
 export type Vector = [number, number, number];
 export type Quaternion = [number, number, number, number];

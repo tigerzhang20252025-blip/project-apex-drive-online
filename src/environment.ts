@@ -54,7 +54,7 @@ function makeGeometry(source: Surface) {
   return geo;
 }
 
-function addSurface(scene: T.Scene, world: RAPIER.World, source: Surface, material: T.Material, grip?: number) {
+function addSurface(scene: T.Object3D, world: RAPIER.World, source: Surface, material: T.Material, grip?: number) {
   const mesh = new T.Mesh(makeGeometry(source), material);
   mesh.receiveShadow = true;
   scene.add(mesh);
@@ -63,7 +63,7 @@ function addSurface(scene: T.Scene, world: RAPIER.World, source: Surface, materi
   return mesh;
 }
 
-function loadMap(loader: T.TextureLoader, path: string, srgb: boolean, anisotropy: number) {
+export function loadMap(loader: T.TextureLoader, path: string, srgb: boolean, anisotropy: number) {
   const texture = loader.load(asset(path), undefined, undefined, (error) => console.warn('Texture unavailable', path, error));
   texture.wrapS = texture.wrapT = T.RepeatWrapping;
   texture.anisotropy = anisotropy;
@@ -82,7 +82,7 @@ function setInstance(mesh: T.InstancedMesh, index: number, pos: T.Vector3, scale
   if (color) mesh.setColorAt(index, color);
 }
 
-function signTexture(text: string, caption: string, dark = false) {
+export function signTexture(text: string, caption: string, dark = false) {
   const canvas = document.createElement('canvas');
   canvas.width = 512; canvas.height = 192;
   const ctx = canvas.getContext('2d')!;
@@ -100,7 +100,7 @@ function signTexture(text: string, caption: string, dark = false) {
   return texture;
 }
 
-function fixedBox(scene: T.Scene, position: T.Vector3, size: T.Vector3, mat: T.Material, rotation = 0) {
+function fixedBox(scene: T.Object3D, position: T.Vector3, size: T.Vector3, mat: T.Material, rotation = 0) {
   const mesh = new T.Mesh(new T.BoxGeometry(size.x, size.y, size.z), mat);
   mesh.position.copy(position);
   mesh.rotation.y = rotation;
@@ -110,20 +110,25 @@ function fixedBox(scene: T.Scene, position: T.Vector3, size: T.Vector3, mat: T.M
   return mesh;
 }
 
-function rng(seed: number) {
+export function rng(seed: number) {
   return () => {
     seed = (1664525 * seed + 1013904223) >>> 0;
     return seed / 4294967296;
   };
 }
 
-export async function buildEnvironment(scene: T.Scene, world: RAPIER.World, renderer: T.WebGLRenderer, panorama:Promise<T.Texture>,wear:RoadWear) {
+export async function buildEnvironment(scene: T.Object3D, world: RAPIER.World, renderer: T.WebGLRenderer, panorama:Promise<T.Texture>,wear:RoadWear, textures?:Set<T.Texture>) {
   const loader = new T.TextureLoader();
   const aniso = Math.min(16, renderer.capabilities.getMaxAnisotropy());
-  const asphalt = loadMap(loader, 'asphalt.jpg', true, aniso);
-  const normals = loadMap(loader, 'asphalt-normal.jpg', false, aniso);
-  const alpine=alpineGround((file,srgb)=>loadMap(loader,file,srgb,aniso),panorama);
-  const asphaltMaterial=makeAsphalt(asphalt,normals,loadMap(loader,'asphalt-rough.jpg',false,aniso));
+  const load=(path:string,srgb:boolean)=>{
+    const texture=loadMap(loader,path,srgb,aniso);
+    textures?.add(texture);
+    return texture;
+  };
+  const asphalt = load('asphalt.jpg', true);
+  const normals = load('asphalt-normal.jpg', false);
+  const alpine=alpineGround(load,panorama);
+  const asphaltMaterial=makeAsphalt(asphalt,normals,load('asphalt-rough.jpg',false));
   wear.apply(asphaltMaterial,.46);
   const {terrain:terrainMaterial,verge:vergeMaterial,shoulder:shoulderMaterial}=alpine;
   const paintMaterial = new T.MeshStandardMaterial({ color: 0xe9e8d8, roughness: .83 });

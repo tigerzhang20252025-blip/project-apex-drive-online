@@ -144,21 +144,17 @@ test('F40 gated manual blocks extreme synchro over-rev, allows mild redline down
     step(1.2);
     car.toggleTransmission();
     car.shift(1);
-    // Accelerate to ~175 km/h (~48.6 m/s) in 3rd gear
     for (let i = 0; i < 1200 && car.speed * 3.6 < 175; i++) {
       car.update({ ...noInput, throttle: 1 });
       if (car.rpm > car.spec.redline - 450 && car.gear < car.spec.gears.length) car.shift(1);
     }
     assert.ok(car.speed * 3.6 >= 170 && car.gear === 3, `speed=${(car.speed*3.6).toFixed(1)} gear=${car.gear}`);
-    // Downshifting to 2nd at ~175 km/h (~9480 rpm > 8150 synchro ceiling) is rejected by synchronizer
     assert.equal(car.shift(-1), 'synchro');
     assert.equal(car.gear, 3);
-    // Engaging forward gear from neutral at high speed selects a compatible gear instead of deadlocking at 1st
     car.gear = 0;
     assert.equal(car.shift(1), 'accepted');
     assert.equal(car.gear, 3);
 
-    // Compare 1 s coasting deceleration at ~146 km/h: 2nd gear (~7910 rpm, mild mechanical over-rev) vs 5th gear
     const measureCoast = (gear) => {
       car.reset();
       step(.5);
@@ -168,7 +164,7 @@ test('F40 gated manual blocks extreme synchro over-rev, allows mild redline down
       if (gear < 3) assert.equal(car.shift(-1), 'accepted');
       else { car.shift(1); car.shift(1); }
       assert.equal(car.gear, gear);
-      step(.3); // let shiftCut complete
+      step(.3);
       const before = car.speed * 3.6;
       step(1);
       return { drop: before - car.speed * 3.6, rpm: car.rpm };

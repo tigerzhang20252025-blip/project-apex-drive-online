@@ -5,7 +5,7 @@ import {onBridge,stations,terrainY,railOffset,roadRipple,type Station} from './t
 export function embankmentWidth(s:Station){
   return 3.2+Math.max(0,s.p.y-terrainY(s.p.x,s.p.z))*.95;
 }
-export function bridgeStructure(scene:T.Scene,world:RAPIER.World){
+export function bridgeStructure(scene:T.Object3D,world:RAPIER.World){
   const concrete=new T.MeshStandardMaterial({color:0xa9a597,roughness:.92});
   const girders=new T.MeshStandardMaterial({color:0x566361,metalness:.48,roughness:.61});
   const deckPanels: T.Matrix4[]=[],beams:T.Matrix4[]=[],piers:T.Matrix4[]=[];
@@ -38,7 +38,7 @@ export function bridgeStructure(scene:T.Scene,world:RAPIER.World){
 }
 
 // Blades and stone patches are grouped by sector so invisible banks can be culled together.
-export function roadsidePlanting(scene:T.Scene,random:()=>number,rockMap:T.Texture,rockNormal:T.Texture,groundY:(x:number,z:number)=>number){
+export function roadsidePlanting(scene:T.Object3D,random:()=>number,rockMap:T.Texture,rockNormal:T.Texture,groundY:(x:number,z:number)=>number){
   const vertices:number[]=[],colours:number[]=[];
   for(let j=0;j<25;j++){
     const az=random()*Math.PI*2,r=Math.sqrt(random())*.20,x=r*Math.cos(az),z=r*Math.sin(az);

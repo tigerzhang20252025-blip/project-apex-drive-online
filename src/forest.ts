@@ -18,18 +18,33 @@ function distantCrown(){
   }
   const g=new T.BufferGeometry();g.setAttribute('position',new T.Float32BufferAttribute(pos,3));g.setAttribute('color',new T.Float32BufferAttribute(col,3));g.computeVertexNormals();return g;
 }
-export async function plantForest(scene:T.Scene,random:()=>number,asset:(s:string)=>string,groundY:(x:number,z:number)=>number){
+type ForestLayout={
+  bounds:T.Box3;
+  candidates:number;
+  setback:number;
+  plantations?:ReadonlyArray<readonly [number,number]>;
+  distance:(x:number,z:number)=>number;
+  cuts?:readonly [number,number,number,number];
+  tileSize?: number;
+};
+
+export async function plantForest(scene:T.Object3D,random:()=>number,asset:(s:string)=>string,groundY:(x:number,z:number)=>number,layout?:ForestLayout){
   const loader=new GLTFLoader();
   const [close,regular,mid]=await Promise.all(['pine-close.glb','trackside-pine.glb','pine-mid.glb'].map(f=>loader.loadAsync(asset(f))));
-  const extent=new T.Box3().setFromPoints(stations.map(s=>s.p)).expandByScalar(220);
+  const extent=layout?.bounds??new T.Box3().setFromPoints(stations.map(s=>s.p)).expandByScalar(220);
   const trees:Tree[]=[],dummy=new T.Object3D();
-  for(let i=0;i<18200;i++){
-    const x=T.MathUtils.lerp(extent.min.x,extent.max.x,random()),z=T.MathUtils.lerp(extent.min.z,extent.max.z,random());
-    const {distance:d}=nearestStation(x,z);
-    if(d<17.5||(x>-158&&x<-114&&z>140&&z<266)||(x>-103&&x<-69&&z>75&&z<165))continue;
+  const scattered=layout?.candidates??18200, planted=layout?.plantations??[];
+  for(let i=0;i<scattered+planted.length;i++){
+    const intentional=i>=scattered;
+    const [x,z]=intentional?planted[i-scattered]:[
+      T.MathUtils.lerp(extent.min.x,extent.max.x,random()),T.MathUtils.lerp(extent.min.z,extent.max.z,random()),
+    ];
+    const d=layout?layout.distance(x,z):nearestStation(x,z).distance;
+    const paddock=!layout&&((x>-158&&x<-114&&z>140&&z<266)||(x>-103&&x<-69&&z>75&&z<165));
+    if(d<(layout?.setback??17.5)||paddock)continue;
     const woodland=.49+.25*Math.sin(x*.018+Math.cos(z*.013)*2)+.17*Math.sin(z*.033+x*.006)+.09*Math.sin(x*.079-z*.047);
     const density=T.MathUtils.smoothstep(woodland,.13,.84)*(.18+.72*T.MathUtils.smoothstep(d,17,48));
-    if(random()>density*.82)continue;
+    if(!intentional&&random()>density*.82)continue;
     const y=groundY(x,z),seed=random(),birch=woodland<.63&&seed>.75;
     const h=(birch?5.3:4.0)+(birch?7.5:13)*(.42*woodland+.58*random());
     dummy.position.set(x,y-.10,z);dummy.rotation.set(0,random()*Math.PI*2,0);
@@ -74,22 +89,23 @@ export async function plantForest(scene:T.Scene,random:()=>number,asset:(s:strin
   }
   add(crown,distant,3,2,'Distant fir stands');
   const tiles=new Map<string,{center:T.Vector3;trees:Tree[];batches:Map<Batch,T.InstancedMesh>;levels:Int8Array}>();
+  const tileSize=layout?.tileSize??112;
   for(const tree of trees){
-    const x=Math.floor(tree.position.x/112),z=Math.floor(tree.position.z/112),key=x+','+z;
+    const x=Math.floor(tree.position.x/tileSize),z=Math.floor(tree.position.z/tileSize),key=x+','+z;
     let cell=tiles.get(key);
-    if(!cell){cell={center:new T.Vector3((x+.5)*112,0,(z+.5)*112),trees:[],batches:new Map(),levels:new Int8Array()};tiles.set(key,cell);}
+    if(!cell){cell={center:new T.Vector3((x+.5)*tileSize,0,(z+.5)*tileSize),trees:[],batches:new Map(),levels:new Int8Array()};tiles.set(key,cell);}
     cell.trees.push(tree);
   }
   for(const cell of tiles.values()){
     cell.levels=new Int8Array(cell.trees.length).fill(-1);
     cell.center.y=cell.trees.reduce((sum,t)=>sum+t.position.y,0)/cell.trees.length;
   }
-  const last=new T.Vector3(Infinity,0,Infinity),cuts=[47,100,185,860];
+  const last=new T.Vector3(Infinity,0,Infinity),cuts=layout?.cuts??[47,100,185,860];
   scene.userData.forest={trees:trees.length,nearTriangles:7578,matureFirs:trees.filter(t=>t.species===2).length};
   return (eye:T.Vector3)=>{
     if(last.distanceToSquared(eye)<25)return;last.copy(eye);
     for(const cell of tiles.values()){
-      if(cell.center.distanceToSquared(eye)>(cuts[3]+95)**2){
+      if(cell.center.distanceToSquared(eye)>(cuts[3]+(layout?.tileSize ? tileSize : 95))**2){
         for(const mesh of cell.batches.values())mesh.visible=false;
         cell.levels.fill(-1);continue;
       }

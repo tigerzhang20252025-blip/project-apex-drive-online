@@ -15,7 +15,7 @@ export type {Switch};
 export class CarVisual {
   readonly group=new T.Group();
   readonly eye=new T.Vector3(-.333,.990,.090);
-  readonly hood=new T.Vector3(0,.733,-1.39);
+  readonly hood=new T.Vector3(0,1.232,-.85);
   readonly hitTargets:T.Mesh[]=[];
   readonly wheels:Array<{pivot:T.Group;roller:T.Group}>=[];
   readonly mirrors=new Mirrors();

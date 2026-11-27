@@ -21,6 +21,11 @@ export class RemoteCar {
 
   get ready() { return Boolean(this.visual); }
   get visiblePosition() { return this.visual?.group.visible ? this.visual.group.position : undefined; }
+  get dustSource() {
+    if (this.selected && this.visual?.group.visible && this.motion.dust) {
+      return { motion: this.motion, spec: vehicles[this.selected].spec };
+    }
+  }
   get stats() {
     return {
       model: this.selected,
