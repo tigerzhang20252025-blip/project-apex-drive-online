@@ -57,6 +57,8 @@ export class Multiplayer {
   private retryTimer?: number;
   private ping?: { n: number; sent: number };
   private clock?: { offset: number; rtt: number };
+  private clockTarget?: number;
+  private minRtt = Infinity;
   private lastPong = 0;
   private opened = false;
   private connecting = false;
@@ -227,7 +229,22 @@ export class Multiplayer {
         const rtt = now - this.ping.sent;
         const offset = message.time + rtt / 2 - now;
         const firstClock = this.clock === undefined;
-        if (!this.clock || rtt <= this.clock.rtt + 8 || Math.abs(offset - this.clock.offset) < 40) this.clock = {offset, rtt};
+        if (!this.clock) {
+          this.clock = { offset, rtt };
+          this.clockTarget = offset;
+          this.minRtt = rtt;
+        } else {
+          this.minRtt = Math.min(rtt, this.minRtt + 1.5);
+          this.clock.rtt = rtt;
+          const target = this.clockTarget ?? this.clock.offset;
+          if (Math.abs(offset - target) > 500) {
+            this.clockTarget = offset;
+            this.clock.offset = offset;
+          } else if (rtt <= this.minRtt + 35 || Math.abs(offset - target) < 25) {
+            const weight = rtt <= this.minRtt + 10 ? .35 : .15;
+            this.clockTarget = target + (offset - target) * weight;
+          }
+        }
         this.lastPong = now;
         this.ping = undefined;
         this.updateConnection(rtt);
@@ -240,7 +257,7 @@ export class Multiplayer {
       case 'snapshot':
         if (!message.live || message.live.session !== this.active || message.slot !== this.peer?.slot) return;
         this.ack = {generation:message.generation, seq:message.seq};
-        this.remote.receive(message);
+        this.remote.receive(message, this.serverNow());
         break;
       case 'timing':
         if (message.session === this.active && message.slot === this.peer?.slot) this.progress = message.progress;
@@ -388,6 +405,11 @@ export class Multiplayer {
   tick(now: number, dt: number, sample: () => VehicleSample, timing: () => Progress) {
     const session = this.session;
     if (!session || !this.active) return;
+    if (this.clock && this.clockTarget !== undefined) {
+      const diff = this.clockTarget - this.clock.offset;
+      const maxStep = Math.min(Math.abs(diff), 25 * Math.min(Math.max(dt, 0), .1));
+      this.clock.offset += Math.sign(diff) * maxStep;
+    }
     const serverNow = this.serverNow();
     this.remote.draw(serverNow, dt);
     if (!this.online || (session.ends !== null && serverNow >= session.ends)) return;
@@ -417,7 +439,8 @@ export class Multiplayer {
     this.serial++;
     this.stayOpen = this.connecting = false;
     this.closeSocket();
-    this.grant = this.state = this.clock = this.seat = this.progress = this.active = undefined;
+    this.grant = this.state = this.clock = this.clockTarget = this.seat = this.progress = this.active = undefined;
+    this.minRtt = Infinity;
     this.laps = [];
     this.remote.dispose();
     if (wasPlaying) this.callbacks.exit();
