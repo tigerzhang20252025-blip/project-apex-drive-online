@@ -81,13 +81,15 @@ type LapRecapHold=
     until:number;
   };
 
-export class LapTiming {
+export class AttemptTiming {
+  private readonly layout: string;
+  constructor(layout: string) { this.layout=layout; }
   count=0;
   best:number|null=null;
   last:number|null=null;
   progress=0;
   readonly history:LapHistoryEntry[]=[];
-  status:'waiting'|'running'|'invalid'='waiting';
+  status:'waiting'|'running'|'invalid'|'complete'='waiting';
   reason='';
   sectors:SectorTuple=[null,null,null];
   sectorRatings:[SectorRating,SectorRating,SectorRating]=['pending','pending','pending'];
@@ -96,18 +98,11 @@ export class LapTiming {
   bestSectors:SectorTuple=[null,null,null];
   bestLapSectors:SectorNumbers|null=null;
   lastLapSectors:SectorNumbers|null=null;
-  private node=-1;
-  private previous=new Vector3();
-  private initialized=false;
-  private elapsed=0;
-  private began=0;
+  protected elapsed=0;
+  protected began=0;
   private sectorBegan=0;
   private sectorIndex:SectorIndex=0;
-  private nextGate=1;
-  private distance=0;
-  private peak=0;
-  private arc=0;
-  private lastLapHold:LapRecapHold|null=null;
+  protected lastLapHold:LapRecapHold|null=null;
 
   get current(){return this.status==='running'?this.elapsed-this.began:null;}
   get currentSector():SectorIndex{return this.sectorIndex;}
@@ -117,14 +112,14 @@ export class LapTiming {
     return a!==null&&b!==null&&c!==null?a+b+c:null;
   }
   get showingLastLap(){
-    return this.status==='running'&&this.lastLapHold?.kind==='last-lap'&&this.elapsed<this.lastLapHold.until;
+    return (this.status==='running'||this.status==='complete')&&this.lastLapHold?.kind==='last-lap'&&this.elapsed<this.lastLapHold.until;
   }
   get showingInvalidRecap(){
     return this.status==='running'&&this.lastLapHold?.kind==='invalid'&&this.elapsed<this.lastLapHold.until;
   }
 
   sectorDisplay():SectorDisplay{
-    if(this.status==='running'&&this.lastLapHold&&this.elapsed<this.lastLapHold.until){
+    if((this.status==='running'||this.status==='complete')&&this.lastLapHold&&this.elapsed<this.lastLapHold.until){
       if(this.lastLapHold.kind==='last-lap'){
         return {
           mode:'last-lap',
@@ -196,7 +191,7 @@ export class LapTiming {
       history:this.history.map(entry=>entry.sectors
         ?{lap:entry.lap,seconds:entry.seconds,sectors:[...entry.sectors] as SectorNumbers}
         :{lap:entry.lap,seconds:entry.seconds}),
-      sectorLayout:SECTOR_LAYOUT_ID,
+      sectorLayout:this.layout,
       bestSectors:[...this.bestSectors],
       bestLapSectors:this.bestLapSectors?[...this.bestLapSectors]:null,
     };
@@ -206,7 +201,7 @@ export class LapTiming {
     if(!data||typeof data!=='object')return;
     const raw=data as Partial<StoredLapRecords>;
     if(!Number.isSafeInteger(raw.count)||(raw.count as number)<1||!isPositive(raw.best)||!Array.isArray(raw.history))return;
-    const layoutMatches=raw.sectorLayout===SECTOR_LAYOUT_ID;
+    const layoutMatches=raw.sectorLayout===this.layout;
     const history:LapHistoryEntry[]=[];
     for(const item of raw.history){
       if(!item||typeof item!=='object')continue;
@@ -260,7 +255,7 @@ export class LapTiming {
   }
 
   cancel(){
-    this.status='waiting';this.reason='';this.node=-1;this.initialized=false;this.progress=0;
+    this.status='waiting';this.reason='';this.progress=0;
     this.lastLapHold=null;
     this.clearCurrentSectors();
   }
@@ -298,6 +293,68 @@ export class LapTiming {
     if(bestLapSector!==null&&ms<0)return {rating:'green',delta,refKind};
     if(ms===0)return {rating:'equal',delta:0,refKind};
     return {rating:'yellow',delta,refKind};
+  }
+
+  protected beginAttempt(when: number) {
+    this.began=this.sectorBegan=when;
+    this.status='running';
+    this.reason='';
+    this.clearCurrentSectors();
+  }
+
+  protected completeSector(when: number) {
+    const index=this.sectorIndex;
+    const duration=when-this.sectorBegan;
+    const evaluated=this.evaluateSector(index,duration);
+    this.sectors[index]=duration;
+    this.sectorRatings[index]=evaluated.rating;
+    this.sectorDeltas[index]=evaluated.delta;
+    this.sectorRefKinds[index]=evaluated.refKind;
+    this.sectorBegan=when;
+    if(index<2)this.sectorIndex=(index+1) as SectorIndex;
+    this.lastLapHold=null;
+  }
+
+  protected recordAttempt(when: number, hold: number) {
+    this.completeSector(when);
+    const splits:SectorNumbers=[this.sectors[0]!,this.sectors[1]!,this.sectors[2]!];
+    const seconds=when-this.began;
+    this.count++;
+    this.last=seconds;
+    this.lastLapSectors=[...splits];
+    if(this.best===null||seconds<this.best){
+      this.best=seconds;
+      this.bestLapSectors=[...splits];
+    }
+    splits.forEach((split,k)=>{
+      const previous=this.bestSectors[k];
+      if(previous===null||split<previous)this.bestSectors[k]=split;
+    });
+    this.history.unshift({lap:this.count,seconds,sectors:[...splits]});
+    if(this.history.length>6)this.history.pop();
+    this.lastLapHold={
+      kind:'last-lap',lap:this.count,seconds,sectors:[...splits],
+      ratings:[...this.sectorRatings],deltas:[...this.sectorDeltas],refKinds:[...this.sectorRefKinds],
+      until:when+hold,
+    };
+  }
+}
+
+export class LapTiming extends AttemptTiming {
+  private node=-1;
+  private previous=new Vector3();
+  private initialized=false;
+  private nextGate=1;
+  private distance=0;
+  private peak=0;
+  private arc=0;
+
+  constructor(){super(SECTOR_LAYOUT_ID);}
+
+  override cancel(){
+    super.cancel();
+    this.node=-1;
+    this.initialized=false;
   }
 
   private locate(p:Vector3){
@@ -347,33 +404,7 @@ export class LapTiming {
           const when=this.elapsed-dt+dt*(-a/(b-a));
           if(this.status==='running'&&this.nextGate===gates.length&&this.distance>courseLength-5
              &&this.sectors[0]!==null&&this.sectors[1]!==null){
-            const seconds=when-this.began;
-            const s1=this.sectors[0],s2=this.sectors[1],s3=when-this.sectorBegan;
-            const lapSectors:SectorNumbers=[s1,s2,s3];
-            const s3Eval=this.evaluateSector(2,s3);
-            const lapRatings:[SectorRating,SectorRating,SectorRating]=[this.sectorRatings[0],this.sectorRatings[1],s3Eval.rating];
-            const lapDeltas:SectorTuple=[this.sectorDeltas[0],this.sectorDeltas[1],s3Eval.delta];
-            const lapRefKinds:[SectorRefKind,SectorRefKind,SectorRefKind]=[this.sectorRefKinds[0],this.sectorRefKinds[1],s3Eval.refKind];
-
-            this.count++;
-            this.last=seconds;
-            this.lastLapSectors=[...lapSectors];
-            if(this.best===null||seconds<this.best){
-              this.best=seconds;
-              this.bestLapSectors=[...lapSectors];
-            }
-            for(let k=0;k<3;k++){
-              const prev=this.bestSectors[k];
-              if(prev===null||lapSectors[k]<prev)this.bestSectors[k]=lapSectors[k];
-            }
-            this.history.unshift({lap:this.count,seconds,sectors:[...lapSectors]});
-            if(this.history.length>6)this.history.pop();
-            this.lastLapHold={
-              kind:'last-lap',
-              lap:this.count,seconds,sectors:[...lapSectors],
-              ratings:lapRatings,deltas:lapDeltas,refKinds:lapRefKinds,
-              until:when+lastLapHoldSeconds,
-            };
+            this.recordAttempt(when,lastLapHoldSeconds);
           }else if(this.status==='invalid'){
             this.lastLapHold={
               kind:'invalid',
@@ -385,28 +416,13 @@ export class LapTiming {
           }else{
             this.lastLapHold=null;
           }
-          this.began=when;
-          this.sectorBegan=when;
           this.distance=this.peak=0;
           this.nextGate=1;
-          this.status='running';
-          this.reason='';
-          this.clearCurrentSectors();
+          this.beginAttempt(when);
         }else if(this.status==='running'){
           if(i===this.nextGate){
             const boundary=sectorBoundaryIndices.indexOf(i as (typeof sectorBoundaryIndices)[number]);
-            if(boundary!==-1){
-              const when=this.elapsed-dt+dt*(-a/(b-a));
-              const duration=when-this.sectorBegan;
-              const evaluated=this.evaluateSector(boundary as SectorIndex,duration);
-              this.sectors[boundary]=duration;
-              this.sectorRatings[boundary]=evaluated.rating;
-              this.sectorDeltas[boundary]=evaluated.delta;
-              this.sectorRefKinds[boundary]=evaluated.refKind;
-              this.sectorBegan=when;
-              this.sectorIndex=(boundary+1) as SectorIndex;
-              this.lastLapHold=null;
-            }
+            if(boundary!==-1)this.completeSector(this.elapsed-dt+dt*(-a/(b-a)));
             this.nextGate++;
           }else this.invalidate('Checkpoint missed');
         }

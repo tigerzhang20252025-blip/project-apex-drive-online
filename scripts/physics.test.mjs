@@ -136,3 +136,43 @@ test('mechanical ignition sequence, starter delay, electrical guards and moving 
   assert.equal(car.ignition,'OFF');
   car.reset();car.operateKey(true);assert.equal(car.ignition,'OUT');world.free();
 });
+
+test('F40 gated manual blocks extreme synchro over-rev, allows mild redline downshift with stronger low-gear engine braking, and matches gear from neutral', () => {
+  const { world, car, step } = setup();
+  try {
+    car.setIgnition();
+    step(1.2);
+    car.toggleTransmission();
+    car.shift(1);
+    for (let i = 0; i < 1200 && car.speed * 3.6 < 175; i++) {
+      car.update({ ...noInput, throttle: 1 });
+      if (car.rpm > car.spec.redline - 450 && car.gear < car.spec.gears.length) car.shift(1);
+    }
+    assert.ok(car.speed * 3.6 >= 170 && car.gear === 3, `speed=${(car.speed*3.6).toFixed(1)} gear=${car.gear}`);
+    assert.equal(car.shift(-1), 'synchro');
+    assert.equal(car.gear, 3);
+    car.gear = 0;
+    assert.equal(car.shift(1), 'accepted');
+    assert.equal(car.gear, 3);
+
+    const measureCoast = (gear) => {
+      car.reset();
+      step(.5);
+      car.body.setLinvel({ x: 0, y: 0, z: -146 / 3.6 }, true);
+      car.update(noInput);
+      car.gear = 3;
+      if (gear < 3) assert.equal(car.shift(-1), 'accepted');
+      else { car.shift(1); car.shift(1); }
+      assert.equal(car.gear, gear);
+      step(.3);
+      const before = car.speed * 3.6;
+      step(1);
+      return { drop: before - car.speed * 3.6, rpm: car.rpm };
+    };
+    const second = measureCoast(2);
+    const fifth = measureCoast(5);
+    assert.ok(second.drop > fifth.drop + 3, `2nd drop=${second.drop.toFixed(2)} vs 5th drop=${fifth.drop.toFixed(2)}`);
+  } finally {
+    world.free();
+  }
+});

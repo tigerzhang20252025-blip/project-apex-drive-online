@@ -6,13 +6,13 @@
   <meta name="theme-color" content="#111419">
   <link rel="icon" href="data:,">
   <title>Project Apex Drive</title>
-  <meta name="description" content="Choose the Ferrari F40 or Nissan GT-R R35 Rally Edition and drive the Alpine Proving Ground.">
+  <meta name="description" content="Choose the Ferrari F40 or Nissan GT-R R35 Rally Edition on the Alpine Proving Ground circuit and Pineglass Run 2.0 rally stage.">
 </head>
 <body>
   <div class="shell">
     <header class="masthead">
       <div class="brand"><span class="mark" aria-hidden="true"><i></i><i></i></span><div><small>PROJECT</small><strong>APEX<span> DRIVE</span></strong></div></div>
-      <div class="header-track"><span class="header-divider" aria-hidden="true"></span><div><span>Alpine Proving Ground</span><small id="track-mode-label">FREE DRIVE</small></div></div>
+      <div class="header-track"><span class="header-divider" aria-hidden="true"></span><div><span id="track-name">Alpine Proving Ground</span><small id="track-mode-label">FREE DRIVE</small></div></div>
       <div class="header-actions">
         <button class="quiet" id="open-garage" type="button">Garage</button>
         <button class="quiet" data-open-help type="button">Help</button>
@@ -23,6 +23,23 @@
     <main class="stage" id="stage" aria-label="Driving simulator" tabindex="0">
       <div id="scene"></div>
       <div id="control-notification" role="status" aria-live="polite" hidden></div>
+      <aside id="observer-hud" aria-label="Observer camera" hidden>
+        <div class="observer-heading"><strong>Observer camera</strong><span>Vehicle frozen</span></div>
+        <p><kbd>W A S D</kbd> Move · <kbd>E / Q</kbd> Up / down · Click to capture mouse or right-drag to look</p>
+        <p><kbd>Shift / Ctrl</kbd> Fast / slow · Scroll to set speed · <kbd>[ / ]</kbd> Previous / next checkpoint</p>
+        <p><kbd>I</kbd> Readout · <kbd>H</kbd> Hide HUD · <kbd>F8</kbd> Exit · <kbd>Esc</kbd> Release mouse</p>
+        <p id="observer-attempt" hidden>Timed attempt invalidated. Start a fresh attempt to record a time.</p>
+        <section id="observer-readout" aria-label="Camera and road measurements">
+          <dl>
+            <dt>Camera X / Y / Z</dt><dd id="observer-position"></dd>
+            <dt>Elevation</dt><dd id="observer-elevation"></dd>
+            <dt>Speed / base</dt><dd id="observer-speed"></dd>
+            <dt>Nearest road X / Y / Z</dt><dd id="observer-road"></dd>
+            <dt>Course distance / grade</dt><dd id="observer-grade"></dd>
+          </dl>
+          <p id="observer-warning" hidden></p>
+        </section>
+      </aside>
       <div class="stage-toolbar">
         <div class="course-label"><span class="course-dot"></span><div><strong id="sector">Main straight</strong><small id="distance">0.00 KM DRIVEN</small></div></div>
         <div class="view-group" aria-label="Camera">
@@ -40,24 +57,34 @@
           </div>
         </div>
         <div id="lap-details" hidden>
-          <dl><dt>Completed</dt><dd id="lap-count">0</dd><dt>Progress</dt><dd id="lap-progress">0%</dd><dt>Last lap</dt><dd id="lap-last">—</dd><dt>Best lap</dt><dd id="lap-best">—</dd><dt>Theoretical best</dt><dd id="lap-theo">—</dd></dl>
+          <dl><dt>Completed</dt><dd id="lap-count">0</dd><dt>Progress</dt><dd id="lap-progress">0%</dd><dt id="timer-last-label">Last lap</dt><dd id="lap-last">—</dd><dt id="timer-best-label">Best lap</dt><dd id="lap-best">—</dd><dt>Theoretical best</dt><dd id="lap-theo">—</dd></dl>
           <div id="sector-records" aria-label="Sector records">
             <div class="sector-table-row head"><span>Sectors</span><span>S1</span><span>S2</span><span>S3</span></div>
             <div class="sector-table-row"><span>Best</span><span id="best-s1">—</span><span id="best-s2">—</span><span id="best-s3">—</span></div>
-            <div class="sector-table-row"><span>Best lap</span><span id="bestlap-s1">—</span><span id="bestlap-s2">—</span><span id="bestlap-s3">—</span></div>
+            <div class="sector-table-row"><span id="timer-splits-label">Best lap</span><span id="bestlap-s1">—</span><span id="bestlap-s2">—</span><span id="bestlap-s3">—</span></div>
           </div>
           <ol id="lap-history"></ol><button id="reset-timer" type="button">Reset timer</button>
         </div>
       </aside>
-      <aside id="online-hud" aria-label="Multiplayer session" hidden>
-        <div class="online-hud-heading"><b id="online-mode-label"></b><small id="online-connection"></small></div>
-        <div id="online-clock" aria-live="polite"></div>
-        <div id="online-opponent"></div><div id="online-track-message" role="status" hidden></div>
-        <div class="online-hud-actions"><button class="text-btn" id="online-end" type="button">End session</button><button class="text-btn" id="online-track-leave" type="button">Leave Room</button></div>
+      <aside id="stage-result" class="stage-result" aria-label="Stage result" hidden>
+        <div><strong id="stage-result-title"></strong><p id="stage-result-splits"></p></div>
+        <button class="start" id="stage-restart" type="button">Restart stage <kbd>R</kbd></button>
       </aside>
+      <div class="stage-session-panels">
+        <aside id="stage-recovery" aria-label="Vehicle recovery" hidden>
+          <button class="quiet" id="recover-vehicle" type="button" title="Recover vehicle (Backspace)">Recover <kbd>⌫</kbd></button>
+          <span id="recovery-message" role="status" hidden></span>
+        </aside>
+        <aside id="online-hud" aria-label="Multiplayer session" hidden>
+          <div class="online-hud-heading"><b id="online-mode-label"></b><small id="online-connection"></small></div>
+          <div id="online-clock" aria-live="polite"></div>
+          <div id="online-opponent"></div><div id="online-track-message" role="status" hidden></div>
+          <div class="online-hud-actions"><button class="text-btn" id="online-end" type="button">End session</button><button class="text-btn" id="online-track-leave" type="button">Leave Room</button></div>
+        </aside>
+      </div>
       <section id="online-finish" class="pause-layer" aria-label="Challenge results" hidden>
         <div class="pause-card online-results">
-          <div class="status-line">BEST LAP CHALLENGE</div><h1 id="online-results-heading" tabindex="-1">Session results</h1>
+          <div class="status-line" id="online-results-mode">BEST LAP CHALLENGE</div><h1 id="online-results-heading" tabindex="-1">Session results</h1>
           <p>Client-validated times</p>
           <div id="online-results"></div>
           <button class="start" id="online-return" type="button">Return to Lobby</button>
@@ -74,7 +101,7 @@
       </aside>
       <div class="car-status"><i id="engine-dot"></i><span id="status">IGNITION OFF</span><span class="signal" id="signal"></span></div>
       <div class="load" id="loading" role="status">
-        <div class="spinner" aria-hidden="true"></div><strong>Preparing the proving ground</strong><small id="load-detail">Loading track and vehicle</small>
+        <div class="spinner" aria-hidden="true"></div><strong>Preparing the course</strong><small id="load-detail">Loading track and vehicle</small>
       </div>
       <div id="pause-layer" class="pause-layer" hidden>
         <div class="pause-card">
@@ -100,6 +127,12 @@
             <div id="garage-cars" role="group" aria-label="Cars"></div>
             <button class="quiet" id="garage-next" aria-label="Next car" type="button">→</button>
           </div>
+          <fieldset class="course-picker">
+            <legend>Course</legend>
+            <div class="course-choices" id="course-choices"></div>
+            <p class="course-description" id="course-description"></p>
+            <p class="course-loading" id="course-loading" role="status" hidden></p>
+          </fieldset>
           <div class="garage-actions">
             <button class="start" id="garage-drive" type="button">Drive</button>
             <button class="quiet" id="garage-select" type="button">Select Car</button>
@@ -108,7 +141,6 @@
           <a id="garage-credits" class="garage-credits" target="_blank" rel="noreferrer">Vehicle asset credits</a>
           </div>
           <section id="online-lobby" aria-label="Multiplayer lobby" hidden>
-            <p class="garage-kicker">Alpine Proving Ground</p>
             <h1>Multiplayer</h1>
             <div id="online-entry">
               <label for="online-name">Driver name <small>optional</small></label>
@@ -123,6 +155,7 @@
             <div id="online-room" hidden>
               <div class="online-code"><div><small>ROOM CODE</small><b id="online-code"></b></div><button class="quiet" id="online-copy" type="button">Copy code</button></div>
               <div class="online-selects">
+                <label class="online-course">Course<select id="online-track"></select></label>
                 <label>Vehicle<select id="online-vehicle"><option value="f40">Ferrari F40</option><option value="r35">Nissan GT-R R35</option></select></label>
                 <label>Session mode<select id="online-mode"><option value="drive">Free Drive</option><option value="challenge">Best Lap Challenge</option></select></label>
               </div>
@@ -171,7 +204,7 @@
       <label>Mouse look sensitivity <input id="sensitivity" type="range" min="0.6" max="2" step="0.1" value="1"></label>
       <label>Chase camera <select id="chase-camera"><option value="close">Close</option><option value="standard">Standard</option></select></label>
       <label>Chassis motion in cockpit <input id="head-motion" type="range" min="0.35" max="1" step="0.05" value="0.85"></label>
-      <label>Show lap timing <input type="checkbox" checked id="show-timing"></label>
+      <label><span id="timer-setting-label">Show lap timing</span> <input type="checkbox" checked id="show-timing"></label>
       <label>Transmission mode <select id="transmission"><option value="auto">Automatic</option><option value="manual">Manual</option></select></label>
       <label id="assist-row">Rally driving assists <select id="assist-mode"><option value="assisted">Grip</option><option value="sport" selected>Rally</option><option value="simulation">Simulation</option></select></label>
       <label>Show Driver Arms <input type="checkbox" id="driver-arms"></label>

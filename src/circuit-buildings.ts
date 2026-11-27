@@ -19,7 +19,7 @@ function strut(g:T.Group,from:T.Vector3,to:T.Vector3,size:number,mat:T.Material)
 function sign(g:T.Group,map:T.Texture,x:number,y:number,z:number,w:number,h:number,angle:number){
   const m=new T.Mesh(new T.PlaneGeometry(w,h),new T.MeshBasicMaterial({map}));m.position.set(x,y,z);m.rotation.y=angle;g.add(m);
 }
-export function buildPaddock(scene:T.Scene, signTexture:(a:string,b:string,dark?:boolean)=>T.Texture) {
+export function buildPaddock(scene:T.Object3D, signTexture:(a:string,b:string,dark?:boolean)=>T.Texture) {
   const pit=new T.Group();pit.position.set(-132,1.57,201);scene.add(pit);
   // Retaining plinth rises to the level of the main straight, garage doors face the apron.
   block(pit,0,-1.76,0,26,3.5,81,concrete);

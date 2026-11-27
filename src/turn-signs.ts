@@ -4,7 +4,7 @@ import {railOffset,sampleAt,surveyMeters} from './track.ts';
 
 // Outside-of-curve alignment, with the panel facing approaching traffic. Only
 // selected hazards get a sequence; the summit also gets an advance hairpin board.
-export function placeTurnSigns(scene:T.Scene){
+export function placeTurnSigns(scene:T.Object3D){
   const panels=new T.Group();panels.name='Curve alignment signs';scene.add(panels);
   const steel=new T.MeshStandardMaterial({color:0x848e90,metalness:.68,roughness:.42});
   const reflective=new T.MeshStandardMaterial({color:0xf6c828,metalness:.10,roughness:.44,emissive:0x644600,emissiveIntensity:.09});

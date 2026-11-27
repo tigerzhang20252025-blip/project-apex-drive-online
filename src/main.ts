@@ -1,16 +1,23 @@
 import {Multiplayer} from './multiplayer.ts';
 import {lightFlags, type Progress, type Seat, type Session, type VehicleSample} from '../multiplayer-poc/src/game.ts';
+import {challengeName,defaultTrack,isTrackId,trackIdentities,type TrackId} from '../multiplayer-poc/src/tracks.ts';
 import {ChaseCamera,type ChasePreset} from './chase-camera.ts';
-import {installStartingGantry} from './start-gantry.ts';
+import {ObserverCamera,inspectObserverRoad} from './observer-camera.ts';
+import {StageTiming} from './stage-timing.ts';
+import {StageRecovery} from './stage-recovery.ts';
+import {buildTrack} from './track-runtime.ts';
+import {tracks,type TrackDefinition} from './tracks.ts';
 import {LapTiming,lapTime,sectorDelta,sectorTime,type SectorRating} from './lap-timing.ts';
 import {RoadWear} from './road-wear.ts';
 import {TireMarks} from './tire-marks.ts';
+import {GravelDust} from './gravel-dust.ts';
+import {mirrorExcludedLayer} from './mirrors.ts';
 import './style.css';
 import {EngineAudio} from './engine-audio.ts';
 import * as T from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { HDRLoader } from 'three/addons/loaders/HDRLoader.js';
-import { asset, buildEnvironment } from './environment.ts';
+import { asset } from './environment.ts';
 import { groundShadow } from './contact-shadow.ts';
 import type {Switch} from './car-visual.ts';
 import {disposeVisual,type VehicleVisual} from './vehicle-visual.ts';
@@ -19,7 +26,6 @@ import {installBindings,shortcutLabel,vehicleShortcuts,type ControlAction,type V
 import {installHelp,cockpitHint,controlReference} from './help.ts';
 import {Showroom} from './showroom.ts';
 import {drivingAssists,type AssistMode} from './vehicle-spec.ts';
-import { startLine, lineDistance, courseLength, grid, oppositeGrid, nearestStation, sampleAt, section, stations, type Station } from './track.ts';
 import { noInput, stepTime, Vehicle, type DriverInput } from './vehicle.ts';
 
 type View = 'cockpit' | 'chase' | 'hood' | 'orbit';
@@ -40,15 +46,18 @@ const transmission = byId<HTMLSelectElement>('transmission');
 const sensitivityField = byId<HTMLInputElement>('sensitivity');
 const loading = byId('loading');
 const shell=document.querySelector<HTMLElement>('.shell')!;
-const trackId='alpine-proving-ground-v1';
-const lapKey=(id:VehicleId)=>'apex.laps.'+trackId+'.'+id;
-function loadRecords(id:VehicleId){
-  const laps=new LapTiming();
-  try{laps.restore(JSON.parse(localStorage.getItem(lapKey(id))??'null'));}catch{}
-  return laps;
+const recordKey=(track:TrackDefinition,id:VehicleId)=>track.id===defaultTrack
+  ?'apex.laps.alpine-proving-ground-v1.'+id
+  :'apex.stages.'+track.id+'.'+track.revision+'.'+track.timingLayout+'.'+id;
+const newTiming=(track:TrackDefinition)=>track.kind==='circuit'?new LapTiming():new StageTiming(track);
+type Timing = ReturnType<typeof newTiming>;
+function loadRecords(track:TrackDefinition,id:VehicleId){
+  const timing=newTiming(track);
+  try{timing.restore(JSON.parse(localStorage.getItem(recordKey(track,id))??'null'));}catch{}
+  return timing;
 }
-function saveRecords(id:VehicleId,laps:LapTiming){
-  try{localStorage.setItem(lapKey(id),JSON.stringify(laps.records()));}catch{}
+function saveRecords(track:TrackDefinition,id:VehicleId,timing:Timing){
+  try{localStorage.setItem(recordKey(track,id),JSON.stringify(timing.records()));}catch{}
 }
 
 function storeSettings(quality: Quality, sensitivity: number) {
@@ -66,43 +75,49 @@ function loadSettings(): { quality: Quality; sensitivity: number } {
   } catch { return { quality: 'balanced', sensitivity: 1 }; }
 }
 
-interface DrivingMode {
-  update(car: Vehicle): { station: Station; name: string };
-  restart(): void;
-}
-
-// Modes own activity state; hardware input, the car, and the track can be reused.
-class FreeDrive implements DrivingMode {
-  update(car: Vehicle) {
-    const closest = nearestStation(car.current.position.x, car.current.position.z);
-    return { station: stations[closest.index], name: section(closest.index) };
+function drawCourse(canvas:HTMLCanvasElement,track:TrackDefinition,caption:boolean) {
+  const {width,height}=canvas;
+  const bounds=new T.Box3().setFromPoints(track.minimap.map(s=>s.p));
+  const h=caption?35:12, w=caption?44:16;
+  const scale=Math.min((width-w)/(bounds.max.x-bounds.min.x),(height-h)/(bounds.max.z-bounds.min.z));
+  const xc=(bounds.max.x+bounds.min.x)*.5,zc=(bounds.max.z+bounds.min.z)*.5;
+  const mapX=(x:number)=>width*.5+(x-xc)*scale;
+  const mapY=(z:number)=>height*.5+(z-zc)*scale+(caption?7:0);
+  const ctx=canvas.getContext('2d')!;
+  ctx.strokeStyle=caption?'#829095':'#a6afa9';
+  ctx.lineWidth=caption?3.4:2.4;
+  ctx.lineJoin=ctx.lineCap='round';
+  ctx.beginPath();
+  for(const {p} of track.minimap)ctx.lineTo(mapX(p.x),mapY(p.z));
+  ctx.stroke();
+  const mark=(x:number,z:number,color:string,r:number)=>{
+    ctx.fillStyle=color;ctx.beginPath();ctx.arc(mapX(x),mapY(z),r,0,2*Math.PI);ctx.fill();
+  };
+  const start=track.gates[0].p;
+  mark(start.x,start.z,'#dda67b',caption?3.8:3);
+  if(track.kind==='stage'){
+    const finish=track.gates.at(-1)!.p;
+    mark(finish.x,finish.z,'#efeee4',caption?3.6:3);
+    if(caption)for(const i of track.sectors){
+      const {p}=track.gates[i];mark(p.x,p.z,'#79a7ac',2.3);
+    }
   }
-  restart() {}
+  if(caption){
+    ctx.fillStyle='#a9b4bb';
+    ctx.font='bold 11px sans-serif';
+    ctx.letterSpacing='1.4px';
+    ctx.fillText(track.kind.toUpperCase()+'  ·  '+(track.length/1000).toFixed(3)+' KM',15,19);
+  }
+  return {mapX,mapY};
 }
 
-function makeMinimap() {
+function makeMinimap(track:TrackDefinition) {
   const minimap = byId<HTMLCanvasElement>('minimap');
   const { width, height } = minimap;
   const base = document.createElement('canvas');
   base.width = width; base.height = height;
-  const bounds = new T.Box3().setFromPoints(stations.map(s => s.p));
-  const scale = Math.min((width - 44) / (bounds.max.x - bounds.min.x), (height - 39) / (bounds.max.z - bounds.min.z));
-  const xc = (bounds.max.x + bounds.min.x) * .5, zc = (bounds.max.z + bounds.min.z) * .5;
-  const mapX = (x: number) => width * .5 + (x - xc) * scale;
-  const mapY = (z: number) => height * .5 + (z - zc) * scale - 3;
-  const ctx = base.getContext('2d')!;
-  ctx.strokeStyle = '#63727d';
-  ctx.lineWidth = 3.8;
-  ctx.lineJoin = 'round'; ctx.lineCap = 'round';
-  ctx.beginPath();
-  for (const { p } of stations) ctx.lineTo(mapX(p.x), mapY(p.z));
-  ctx.stroke();
-  ctx.fillStyle = '#a9b4bb';
-  ctx.font = 'bold 11px sans-serif';
-  ctx.letterSpacing = '1.4px';
-  ctx.fillText('CIRCUIT  ·  '+(courseLength/1000).toFixed(3)+' KM', 15, 19);
-  ctx.fillStyle = '#9ba7b2';
-  ctx.fillRect(mapX(startLine.p.x)-6, mapY(startLine.p.z)-.7, 12, 1.4);
+  const {mapX,mapY}=drawCourse(base,track,true);
+  minimap.setAttribute('aria-label',track.name+' · '+(track.length/1000).toFixed(3)+' km');
   const cameraCtx = minimap.getContext('2d')!;
   return (x: number, z: number, direction: T.Vector3, opponent?:T.Vector3) => {
     cameraCtx.clearRect(0, 0, width, height);
@@ -132,10 +147,12 @@ function makeMinimap() {
 async function start() {
   const params=new URLSearchParams(location.search);
   const diagnostic=import.meta.env.DEV&&params.has('diagnostics');
-  let currentVehicle:VehicleId='f40';
+  let currentVehicle:VehicleId='f40', currentTrack=tracks[defaultTrack];
   try{
     const stored=diagnostic?params.get('vehicle'):localStorage.getItem('apex.vehicle');
     if(isVehicleId(stored))currentVehicle=stored;
+    const savedTrack=diagnostic?params.get('track'):localStorage.getItem('apex.track');
+    if(isTrackId(savedTrack))currentTrack=tracks[savedTrack];
   }catch{}
   let inGarage=!diagnostic||params.has('garage');
   let selecting=false,switching=false;
@@ -175,36 +192,68 @@ async function start() {
   });
 
   await RAPIER.init();
-  const world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
-  world.timestep = stepTime;
   const wear=new RoadWear();
-  const environmentReady=buildEnvironment(scene, world, renderer, skyPromise.then(sky=>sky.material.map!),wear);
-  let car = new Vehicle(world, vehicles[currentVehicle].spec);
-  let visual:VehicleVisual = await vehicles[currentVehicle].build();
-  const [,skydome,updateVegetation]=await Promise.all([visual.load(), skyPromise,environmentReady]);
+  const panorama=skyPromise.then(sky=>sky.material.map!);
+  const trackLoadingStart=performance.now();
+  let [runtime,initialVisual,skydome]=await Promise.all([
+    buildTrack(currentTrack,renderer,panorama,wear),
+    vehicles[currentVehicle].build(),
+    skyPromise,
+  ]);
+  let visual:VehicleVisual=initialVisual;
+  let trackLoadMs=performance.now()-trackLoadingStart;
+  let {world,gantry}=runtime;
+  scene.add(runtime.root);
+  let car = new Vehicle(world,vehicles[currentVehicle].spec,currentTrack.grid[0]);
+  await visual.load();
+  const applyTrackLighting=()=>{
+    const {panorama,background,fog,hemisphere,sunIntensity}=currentTrack.environment;
+    skydome.visible=panorama;
+    (scene.background as T.Color).setHex(background);
+    scene.fog=new T.Fog(...fog);
+    rim.color.setHex(hemisphere[0]);
+    rim.groundColor.setHex(hemisphere[1]);
+    sun.intensity=sunIntensity;
+    scene.userData.forest=runtime.root.userData.forest;
+  };
+  applyTrackLighting();
+  const updateVegetation=(eye:T.Vector3)=>runtime.updateVegetation(eye);
   const marks=new TireMarks(scene,wear);
-  let laps=loadRecords(currentVehicle);
+  const dust=new GravelDust(scene);
+  let laps=loadRecords(currentTrack,currentVehicle);
+  let recovery=currentTrack.kind==='stage'?new StageRecovery(currentTrack):undefined;
   let multiplayer:Multiplayer;
   let onlineRun:Session|null=null;
   let gridSlot:Seat=1;
   let poseReset=0;
-  let submittedLaps=0;
-  const gantry=installStartingGantry(scene);
+  let submittedAttempts=0;
+  let stageLaunchOnGo=false;
+  const physicsSamples:number[]=[];
   const showroom=new Showroom(scene.environment);
-  function driveStep(input:DriverInput,timed=true){
-    car.update(input);visual.popups.step(stepTime);marks.update(car);
+  function driveStep(input:DriverInput,timed=true,completedAt?:number){
+    if(timed&&laps instanceof StageTiming&&(stageLaunchOnGo||(car.running&&input.throttle>0))){
+      laps.launch();stageLaunchOnGo=false;
+    }
+    const physicsStart=diagnostic?performance.now():0;
+    car.update(input);
+    if(diagnostic&&physicsSamples.length<12000)physicsSamples.push(performance.now()-physicsStart);
+    visual.popups.step(stepTime);marks.update(car);
+    dust.stepLocal(currentTrack,car,input,stepTime);
     if(!onlineRun)gantry.signal.step(stepTime);
-    if(timed)timeLap(car.current.position,car.direction,car.signedSpeed,stepTime);
+    if(timed)timeLap(car.current.position,car.direction,car.signedSpeed,stepTime,completedAt);
+    if(timed&&recovery&&laps instanceof StageTiming&&!document.hidden&&(!onlineRun||(!paused&&!overlayOpen()))&&
+      recovery.step(car,input,laps.passedGates,stepTime))return applyRecovery();
+    return false;
   }
-  function timeLap(position:T.Vector3,heading:T.Vector3,speed:number,dt:number){
+  function timeLap(position:T.Vector3,heading:T.Vector3,speed:number,dt:number,completedAt?:number){
     const count=laps.count;
     laps.step(position,heading,speed,dt);
     if(laps.count===count)return;
-    if(!onlineRun)saveRecords(currentVehicle,laps);
-    else if(laps.lastLapSectors&&multiplayer.connected){
+    if(!onlineRun)saveRecords(currentTrack,currentVehicle,laps);
+    else if(laps.lastLapSectors){
       const [a,b,c]=laps.lastLapSectors;
       const first=Math.round(a*1000), second=Math.round((a+b)*1000), total=Math.round((a+b+c)*1000);
-      multiplayer.submitLap(++submittedLaps,[first,second-first,total-second]);
+      if(multiplayer.submitAttempt(submittedAttempts+1,[first,second-first,total-second],completedAt))submittedAttempts++;
     }
   }
   const q=(n:number,precision=1000)=>Math.round(n*precision)/precision;
@@ -217,30 +266,32 @@ async function start() {
     return {
       position:[q(position.x),q(position.y),q(position.z)],
       orientation:[q(rotation.x,10000),q(rotation.y,10000),q(rotation.z,10000),q(rotation.w,10000)],
-      velocity:[q(car.velocity.x),q(car.velocity.y),q(car.velocity.z)],
-      steering:[q(wheels[0].steer),q(wheels[1].steer)],
-      wheels:wheels.map(w=>q(w.spin)) as [number,number,number,number],
-      suspension:wheels.map(w=>q(w.length)) as [number,number,number,number],
+      velocity:[q(car.velocity.x,100),q(car.velocity.y,100),q(car.velocity.z,100)],
+      steering:[q(wheels[0].steer,100),q(wheels[1].steer,100)],
+      wheels:wheels.map(w=>q(w.spin,100)) as [number,number,number,number],
+      suspension:wheels.map(w=>q(w.length,100)) as [number,number,number,number],
       flags,reset:poseReset,progress:q(laps.progress,10000),
+      ...(currentTrack.dust&&dust.rates.some(rate=>rate>0)?{dust:dust.rates}:{}),
     };
   }
   function networkTiming():Progress{
     return {sector:laps.currentSector,ms:laps.current===null?null:Math.round(laps.current*1000),
       splits:laps.sectors.map(n=>n===null?null:Math.round(n*1000)) as [number|null,number|null,number|null],
-      invalid:laps.status==='invalid'};
+      invalid:laps.status==='invalid',complete:laps.status==='complete'};
   }
   let groundContact=groundShadow(scene,car);
   (inGarage?showroom.scene:scene).add(visual.group);
-  function settle(){
-    for(let i=0;i<130;i++)car.update(noInput);
-    car.travelled=0;
+  function settle(vehicle=car){
+    for(let i=0;i<130;i++)vehicle.update(noInput);
+    vehicle.travelled=0;
   }
   settle();
 
   const canvas = renderer.domElement;
   canvas.setAttribute('aria-label', 'Interactive 3D driving view');
   byId('scene').append(canvas);
-  const camera = new T.PerspectiveCamera(58, 1, .032, 2200);
+  const camera = new T.PerspectiveCamera(58,1,.032,currentTrack.environment.viewDistance);
+  camera.layers.enable(mirrorExcludedLayer);
   let orbitYaw=0,orbitPitch=.19,orbitDistance=5.35;
   let view: View = 'chase';
   let { quality, sensitivity } = loadSettings();
@@ -262,10 +313,8 @@ async function start() {
   const lightX=new T.Vector3(0,1,0).cross(lightDir).normalize(),lightY=lightDir.clone().cross(lightX).normalize();
   const shadowAnchor=new T.Vector3();
   const samples: number[] = [];
-  const mode: DrivingMode = new FreeDrive();
   const keys = new Set<string>();
-  const map = makeMinimap();
-  byId('minimap').setAttribute('aria-label','Alpine Proving Ground · '+(courseLength/1000).toFixed(3)+' km');
+  let map = makeMinimap(currentTrack);
   const viewButtons = document.querySelectorAll<HTMLButtonElement>('[data-camera]');
   const ignition = byId<HTMLButtonElement>('ignition');
   const engineDot = byId('engine-dot');
@@ -273,6 +322,78 @@ async function start() {
   const telemetry = byId('telemetry');
   const labels = Object.fromEntries(['speed','rpm','gear','gear-mode','signal','sector','distance','fps','tach','ignition-text'].map(id => [id,byId(id)]));
   const setText = (el: HTMLElement, value: string) => { if (el.textContent !== value) el.textContent = value; };
+
+  const observer = new ObserverCamera(camera);
+  const observerHud = byId('observer-hud');
+  const observerReadout = byId('observer-readout');
+  const observerFields = ['position', 'elevation', 'speed', 'road', 'grade', 'warning'].map(id => byId('observer-' + id));
+  let observerView: { layers: number; far: number; fog: T.Fog | T.FogExp2 | null } | undefined;
+  let observerDrag = false;
+  let observerUiDue = 0;
+
+  function endObservation() {
+    if (!observerView) return;
+    camera.layers.mask = observerView.layers;
+    camera.far = observerView.far;
+    camera.updateProjectionMatrix();
+    scene.fog = observerView.fog;
+    observerView = undefined;
+    delete stage.dataset.observer;
+    delete shell.dataset.observer;
+    observerHud.hidden = true;
+    observer.clearInput();
+    observerDrag = false;
+    if (document.pointerLockElement === canvas) document.exitPointerLock();
+    keys.clear();
+    looking = false;
+    accumulator = 0;
+    clock = performance.now();
+    snapView = true;
+    frameCap = 4;
+    sinceUI = 1;
+    if (paused) byId('resume').focus({preventScroll: true});
+    else stage.focus({preventScroll: true});
+  }
+
+  function beginObservation() {
+    observerView = { layers: camera.layers.mask, far: camera.far, fog: scene.fog };
+    observer.begin();
+    camera.layers.enable(1);
+    camera.far = Math.max(camera.far, 5200);
+    camera.updateProjectionMatrix();
+    if (scene.fog instanceof T.Fog) scene.fog = new T.Fog(scene.fog.color, 1250, 4600);
+    if (laps.status === 'running') laps.invalidate('Observer used');
+    byId('observer-attempt').hidden = laps.reason !== 'Observer used';
+    stage.dataset.observer = shell.dataset.observer = 'active';
+    observerHud.hidden = false;
+    observerUiDue = 0;
+    looking = false;
+    canvas.style.cursor = '';
+    canvas.title = '';
+    keys.clear();
+    accumulator = 0;
+    stage.focus({preventScroll: true});
+  }
+
+  function updateObserverReadout(now: number) {
+    if (observerHud.hidden || observerReadout.hidden || now < observerUiDue) return;
+    observerUiDue = now + 125;
+    const [position, elevation, speed, road, grade, warning] = observerFields;
+    const xyz = (point: T.Vector3) => point.toArray().map(value => value.toFixed(1)).join(' / ') + ' m';
+    const estimate = inspectObserverRoad(currentTrack, camera.position);
+    setText(position, xyz(camera.position));
+    setText(elevation, camera.position.y.toFixed(1) + ' m');
+    setText(speed, observer.speed.toFixed(1) + ' / ' + observer.baseSpeed.toFixed(1) + ' m/s');
+    setText(road, xyz(estimate.sample.p));
+    setText(grade, (estimate.distance / 1000).toFixed(3) + ' km / ' +
+      (Number.isFinite(estimate.grade) ? (estimate.grade > 0 ? '+' : '') + estimate.grade.toFixed(1) + '%' : '—'));
+    const messages = [
+      estimate.ambiguous ? 'Ambiguous road estimate. Nearby sections overlap or run close together.' : '',
+      estimate.overhead ? 'Road centreline is above the camera. Check which level you are viewing.' : '',
+    ].filter(Boolean);
+    warning.hidden = messages.length === 0;
+    setText(warning, messages.join(' '));
+  }
 
   function resize() {
     width = Math.max(1, stage.clientWidth);
@@ -287,6 +408,7 @@ async function start() {
 
   function applyQuality(value: Quality) {
     quality = value;
+    dust.setQuality(quality);
     const { shadows, span } = presets[quality];
     sun.shadow.mapSize.set(shadows, shadows);
     if (sun.shadow.map) {
@@ -334,6 +456,7 @@ async function start() {
     setText(byId('pause-garage'),onlineRun?'Leave Room':'Return to garage');
     setText(byId('pause'), paused ? 'Resume' : 'Pause');
     stage.dataset.paused = String(next);
+    updateRecoveryHud();
     if (next) byId('resume').focus();
     else stage.focus({ preventScroll: true });
     sinceUI = 1;
@@ -361,9 +484,13 @@ async function start() {
   dialLighting.addEventListener('input',()=>{setDialLight();try{localStorage.setItem('apex.dial-lighting',dialLighting.value);}catch{}});
 
   function reset(restart = false) {
-    car.reset(restart,onlineRun&&gridSlot===2?oppositeGrid:grid);
+    const spawn=currentTrack.grid[onlineRun&&gridSlot===2?1:0];
+    car.reset(restart,spawn.position,spawn.rotation);
     if(onlineRun)poseReset++;
     laps.cancel();
+    recovery?.reset();
+    if(onlineRun&&!restart)dust.resetLocal();else dust.clear();
+    byId('stage-result').hidden=true;
     if(restart){marks.clear();visual.popups.reset();gantry.signal.reset();restoreAssist();}else marks.disconnect();
     accumulator = 0;
     lookYaw = 0; lookPitch = -.195;gearLook=false;
@@ -372,11 +499,57 @@ async function start() {
     sinceUI = 1;
     if (restart) {
       launched = false;
-      mode.restart();
       setView('chase');
       setPaused(false);
     }
   }
+
+  function canRecover() {
+    return recovery?.ready && !inGarage && !paused && !observerView && !overlayOpen() && !document.hidden &&
+      (!onlineRun || (multiplayer.connected && !multiplayer.prestart && !multiplayer.finished));
+  }
+
+  function applyRecovery() {
+    if (!recovery || !(laps instanceof StageTiming)) return false;
+    const station=recovery.recover(laps.passedGates);
+    if (station===null) {
+      const spawn=currentTrack.grid[onlineRun&&gridSlot===2?1:0];
+      car.reset(false,spawn.position,spawn.rotation);
+    } else {
+      const {p,forward}=currentTrack.sampleAt(station);
+      const yaw=Math.atan2(-forward.x,-forward.z);
+      car.reset(false,p,{x:0,y:Math.sin(yaw/2),z:0,w:Math.cos(yaw/2)});
+    }
+    laps.resumeAfterRecovery();
+    if(onlineRun)dust.resetLocal();else dust.clear();
+    if (onlineRun) poseReset++;
+    marks.disconnect();
+    keys.clear();
+    snapView=true;
+    frameCap=4;
+    sinceUI=1;
+    updateRecoveryHud();
+    return true;
+  }
+
+  const recoveryHud=byId('stage-recovery');
+  const recoverButton=byId<HTMLButtonElement>('recover-vehicle');
+  const recoveryMessage=byId('recovery-message');
+  function updateRecoveryHud() {
+    const show=Boolean(recovery)&&!inGarage&&!paused&&!observerView&&(!onlineRun||(!multiplayer.prestart&&!multiplayer.finished));
+    recoveryHud.hidden=!show;
+    if (!show || !recovery) return;
+    recoverButton.disabled=!canRecover();
+    const pending=recovery.pending;
+    const message=pending ? pending.reason+' · recovering in '+Math.max(1,Math.ceil(pending.seconds))+' s' :
+      recovery.recentlyRecovered ? 'Vehicle recovered'+(laps.status==='invalid'?' · no time recorded':'') : '';
+    recoveryMessage.hidden=!message;
+    setText(recoveryMessage,message);
+  }
+  recoverButton.addEventListener('click',()=>{
+    if(canRecover())applyRecovery();
+    stage.focus({preventScroll:true});
+  });
 
   let audio=new EngineAudio(currentVehicle);
   const volume=byId<HTMLInputElement>('engine-volume');
@@ -483,15 +656,18 @@ async function start() {
     switch(action){
       case 'shift-up':
       case 'shift-down': {
-        const result=car.spec.transmission&&!car.automatic&&car.running&&car.isShifting?'busy':car.shift(action==='shift-up'?1:-1);
+        const result=!car.automatic&&car.running&&car.isShifting?'busy':car.shift(action==='shift-up'?1:-1);
         const reasons={
           automatic:'Switch to manual to select gears',engine:'Start the engine before shifting',
           direction:'Stop before changing driving direction',rpm:'Downshift blocked by engine speed',
+          synchro:'Gear blocked by synchronizer — speed too high',
           limit:action==='shift-up'?'Already in the highest gear':'Already in reverse',busy:'Shift in progress',
         };
         if(result==='accepted'){
           visual.animateControl?.(action);
           audio.shiftCue(car.gear,view==='cockpit');
+        }else if(result==='synchro'){
+          audio.synchroGrind(view==='cockpit');
         }
         message=result==='accepted'?(car.pendingManualGear===null?'Gear ':'Shift requested → ')+gearText(car.gear):reasons[result];
         break;
@@ -600,6 +776,33 @@ async function start() {
   }
 
   const timerPanel=byId('lap-panel'),timerDetails=byId('lap-details'),summary=byId('lap-summary');
+  const stageResult=byId('stage-result');
+  byId('stage-restart').addEventListener('click',()=>{
+    if(!onlineRun||!multiplayer.finished)reset();
+    stage.focus({preventScroll:true});
+  });
+  function updateTrackLabels(){
+    const attempt=currentTrack.kind==='stage'?'stage':'lap';
+    setText(byId('track-name'),currentTrack.name);
+    setText(byId('timer-last-label'),'Last '+attempt);
+    setText(byId('timer-best-label'),'Best '+attempt);
+    setText(byId('timer-splits-label'),'Best '+attempt);
+    setText(byId('timer-setting-label'),'Show '+attempt+' timing');
+    byId('test-start-lights').hidden=currentTrack.kind==='stage';
+    stageResult.hidden=true;
+    stage.dataset.track=currentTrack.id;
+    updateRecoveryHud();
+  }
+  function updateStageResult(){
+    const show=currentTrack.kind==='stage'&&!inGarage&&!paused&&(!onlineRun||!multiplayer.finished)&&
+      (laps.status==='complete'||(laps.status==='invalid'&&!recovery?.hasRecovered));
+    stageResult.hidden=!show;
+    if(!show)return;
+    setText(byId('stage-result-title'),laps.status==='complete'?'Stage complete · '+lapTime(laps.last):'Stage invalid · '+laps.reason);
+    const splits=laps.status==='complete'?laps.lastLapSectors:null;
+    setText(byId('stage-result-splits'),splits?splits.map((split,i)=>'S'+(i+1)+' '+sectorTime(split)).join('  ·  '):
+      'Continue driving or restart for a timed attempt.');
+  }
   const timingVisible=byId<HTMLInputElement>('show-timing');
   try{timingVisible.checked=localStorage.getItem('apex.timing')!=='hidden';}catch{}
   timerPanel.hidden=!timingVisible.checked;
@@ -607,7 +810,7 @@ async function start() {
   summary.addEventListener('click',()=>{timerDetails.hidden=!timerDetails.hidden;summary.setAttribute('aria-expanded',String(!timerDetails.hidden));sinceUI=1;stage.focus({preventScroll:true});});
   byId('reset-timer').addEventListener('click',()=>{
     if(onlineRun)return;
-    laps.reset();saveRecords(currentVehicle,laps);sinceUI=1;stage.focus({preventScroll:true});
+    laps.reset();saveRecords(currentTrack,currentVehicle,laps);sinceUI=1;stage.focus({preventScroll:true});
   });
   const timerFields=Object.fromEntries(['state','current','count','progress','last','best','theo','history'].map(k=>[k,byId('lap-'+k)]));
   const sectorBanner=byId('sector-banner');
@@ -632,19 +835,26 @@ async function start() {
     setText(byId('start-light-state'),signalText);
     (byId('test-start-lights') as HTMLButtonElement).disabled=Boolean(onlineRun)||paused||gantry.signal.phase==='countdown';
     if(timerPanel.dataset.status!==laps.status)timerPanel.dataset.status=laps.status;
-    setText(timerFields.state,laps.status==='running'?'Lap '+(laps.count+1):laps.status==='invalid'?laps.reason:'Cross start line');
-    setText(timerFields.current,lapTime(laps.current));
+    const stageCourse=currentTrack.kind==='stage';
+    const attempt=stageCourse?'Stage':'Lap';
+    const waiting=stageCourse?(onlineRun&&multiplayer.prestart?'Awaiting start':'Drive to start'):'Cross start line';
+    setText(timerFields.state,laps.status==='running'?attempt+' '+(laps.count+1):laps.status==='complete'?'Stage complete':
+      laps.status==='invalid'?laps.reason:waiting);
+    setText(timerFields.current,lapTime(laps.status==='complete'?laps.last:laps.current));
     const display=laps.sectorDisplay();
     const usesBestSectorRef=display.refKinds.some(k=>k==='bestSector');
     let bannerText='',bannerKind='';
     if(display.mode==='last-lap'){
       bannerKind='last-lap';
-      bannerText='LAST LAP'+(display.lap!==null?' · L'+display.lap:'')+(usesBestSectorRef?' · REF BEST SEC':'');
+      bannerText=(stageCourse?'STAGE COMPLETE':'LAST LAP')+(display.lap!==null?' · '+(stageCourse?'#':'L')+display.lap:'')+(usesBestSectorRef?' · REF BEST SEC':'');
     }else if(display.mode==='invalid'){
       bannerKind='invalid';
       bannerText=laps.status==='running'&&display.reason
         ?'LAST LAP INVALID · '+display.reason
         :'INVALID · NOT RECORDED';
+    }else if(laps instanceof StageTiming&&laps.trackLimitWarning){
+      bannerKind='warning';
+      bannerText='Track limits · return to road';
     }else if(usesBestSectorRef){
       bannerKind='ref';
       bannerText='DELTA VS BEST SEC';
@@ -672,10 +882,11 @@ async function start() {
       setText(bestSectorFields[i],sectorTime(laps.bestSectors[i]));
       setText(bestLapSectorFields[i],sectorTime(laps.bestLapSectors?laps.bestLapSectors[i]:null));
     }
-    const history=laps.history.map(l=>'Lap '+l.lap+'   '+lapTime(l.seconds)+(l.seconds===laps.best?'   BEST':'')).join('\n');
+    const history=laps.history.map(l=>attempt+' '+l.lap+'   '+lapTime(l.seconds)+(l.seconds===laps.best?'   BEST':'')).join('\n');
     if(history!==historyShown){historyShown=history;timerFields.history.replaceChildren(...(history?history.split('\n'):[]).map(text=>{const li=document.createElement('li');li.textContent=text;return li;}));}
   }
   function updateUI() {
+    updateRecoveryHud();
     const debug=byId('debug-panel');
     if(!debug.hidden){
       const contacts=car.spec.wheels.map((_,i)=>car.controller.wheelIsInContact(i)?'●':'○').join(' ');
@@ -693,11 +904,11 @@ Torque F/R   ${Math.round(car.deliveredFrontShare*100)} / ${Math.round((1-car.de
 TC / ABS     ${car.tcActive} / ${car.absActive}
 ${car.spec.awd?car.tireTelemetry.map((w,i)=>['FL','FR','RL','RR'][i]+' '+w.surface+' '+(w.slipAngle*180/Math.PI).toFixed(1)+'° '+(w.contact?'contact':'air')).join('\n')+'\nSlip angle is estimated from contact-point velocity.':''}`);
     }
-    const located = mode.update(car);
     updateLaps();
+    updateStageResult();
     const progress=laps.progress;
-    setText(labels.sector, located.name);
-    setText(labels.distance, `${(car.travelled / 1000).toFixed(2)} KM DRIVEN · ${Math.floor(progress*100)}% CIRCUIT`);
+    setText(labels.sector,currentTrack.regionAt(car.current.position.x,car.current.position.z));
+    setText(labels.distance, `${(car.travelled / 1000).toFixed(2)} KM DRIVEN · ${Math.floor(progress*100)}% ${currentTrack.kind.toUpperCase()}`);
     setText(labels.speed, String(Math.round(car.speed * 3.6)));
     setText(labels.rpm, String(Math.round(car.rpm)));
     setText(labels.gear,gearText(car.indicatedGear));
@@ -731,7 +942,7 @@ ${car.spec.awd?car.tireTelemetry.map((w,i)=>['FL','FR','RL','RR'][i]+' '+w.surfa
     try{localStorage.setItem('apex.chase-camera',chaseSetting.value);}catch{}
   });
 
-  function cameraPose(dt: number) {
+  function drivingCameraPose(dt: number) {
     const { position, quaternion } = visual.group;
     if(view==='chase'){
       chaseCamera.update(camera,position,quaternion,car,dt,chaseSetting.value as ChasePreset,snapView);
@@ -765,8 +976,14 @@ ${car.spec.awd?car.tireTelemetry.map((w,i)=>['FL','FR','RL','RR'][i]+' '+w.surfa
       }
     }
     snapView = false;
-    skydome.position.copy(camera.position);updateVegetation(camera.position);
+  }
 
+  function cameraPose(dt: number) {
+    if (!observerView) drivingCameraPose(dt);
+    skydome.position.copy(camera.position);
+    updateVegetation(camera.position);
+
+    const position = observerView ? camera.position : visual.group.position;
     const texel=2*sun.shadow.camera.right/sun.shadow.mapSize.x;
     shadowAnchor.copy(position);
     const lx=position.dot(lightX),ly=position.dot(lightY);
@@ -807,25 +1024,43 @@ ${car.spec.awd?car.tireTelemetry.map((w,i)=>['FL','FR','RL','RR'][i]+' '+w.surfa
       }
       help.update();return;
     }
-    const acceptsInput = !paused && !overlayOpen() && !document.hidden;
-    const active = Boolean(onlineRun) || (!paused && !overlayOpen());
+    const acceptsInput = !observerView && !paused && !overlayOpen() && !document.hidden;
+    const active = Boolean(onlineRun) || (!observerView && !paused && !overlayOpen());
+    if (observerView && !document.hidden) {
+      dust.advanceTime(dt);
+      observer.step(Math.min(elapsed, .25));
+      updateObserverReadout(now);
+    }
+    const maxOnlineGap=.9;
+    const serverNow=onlineRun?multiplayer.serverNow():0;
+    const holding={...noInput,handbrake:true};
     if(onlineRun){
-      if(elapsed>.15)laps.invalidate('Simulation interrupted');
-      gantry.signal.synchronize(onlineRun.starts-multiplayer.serverNow());
+      if(serverNow>=onlineRun.starts && serverNow-elapsed*1000<(onlineRun.ends??Infinity)){
+        if(elapsed>maxOnlineGap)laps.invalidate('Simulation interrupted');
+        else if(multiplayer.timingConnectionExpired)laps.invalidate('Connection interrupted');
+      }
+      gantry.signal.synchronize(onlineRun.starts-serverNow);
     }
     if (active) {
-      const held = onlineRun && (multiplayer.prestart || multiplayer.finished);
-      const timed = !onlineRun || (!held && !document.hidden && multiplayer.connected);
-      const input = held || (onlineRun&&!acceptsInput) ? {...noInput,handbrake:true} : driverInput();
-      accumulator += dt;
+      const input=onlineRun&&!acceptsInput?holding:driverInput();
+      accumulator += onlineRun&&elapsed<=maxOnlineGap ? elapsed : dt;
       while (accumulator >= stepTime) {
-        driveStep(input,timed);
         accumulator -= stepTime;
+        const completedAt=serverNow-accumulator*1000;
+        const held=onlineRun&&(completedAt<onlineRun.starts||completedAt>(onlineRun.ends??Infinity));
+        const timed=!onlineRun||(!held&&!document.hidden&&!multiplayer.timingConnectionExpired);
+        if(driveStep(held?holding:input,timed,completedAt)) {
+          accumulator=0;
+          break;
+        }
       }
     }
-    if(onlineRun)multiplayer.tick(now,dt,networkPose,networkTiming);
+    if(onlineRun){
+      multiplayer.tick(now,dt,networkPose,networkTiming);
+      dust.stepRemote(currentTrack,multiplayer.remote.dustSource,world,dt);
+    }
     audio.update(car,camera,view==='cockpit',acceptsInput&&document.hasFocus());
-    if (active || frameCap > 0) {
+    if (active || (observerView && !document.hidden) || frameCap > 0) {
       if (frameCap > 0) frameCap--;
       const alpha=active ? Math.min(1,accumulator/stepTime) : 1;
       marks.flush(now/1000);
@@ -833,8 +1068,9 @@ ${car.spec.awd?car.tireTelemetry.map((w,i)=>['FL','FR','RL','RR'][i]+' '+w.surfa
       visual.sync(car,alpha);
       groundContact.update(visual.group,alpha);
       cameraPose(dt);
-      if(view==='cockpit')visual.mirrors.update(renderer,scene,visual.group,now);
-      renderer.shadowMap.autoUpdate=(view==='cockpit'&&!car.spec.awd)||now>=shadowRefresh;
+      dust.flush(!observerView&&(view==='cockpit'||view==='hood'));
+      if(!observerView&&view==='cockpit')visual.mirrors.update(renderer,scene,visual.group,now,currentTrack.kind==='stage');
+      renderer.shadowMap.autoUpdate=(!observerView&&view==='cockpit'&&!car.spec.awd)||now>=shadowRefresh;
       if(renderer.shadowMap.autoUpdate)shadowRefresh=now+(quality==='high'?0:1000/(car.spec.awd?20:30));
       renderer.render(scene, camera);
       drawFrames++;help.update();
@@ -855,6 +1091,30 @@ ${car.spec.awd?car.tireTelemetry.map((w,i)=>['FL','FR','RL','RR'][i]+' '+w.surfa
 
   const bindings=installBindings(byId('binding-fields'),syncControlPanel);
   window.addEventListener('keydown', (event) => {
+    if (event.code === 'F8' && !event.ctrlKey && !event.metaKey && !event.altKey && !inGarage && !overlayOpen()) {
+      if (!observerView && currentTrack.kind !== 'stage') return;
+      event.preventDefault();
+      if (!event.repeat) {
+        if (observerView) endObservation();
+        else if (onlineRun || multiplayer.isOpen) notify('Observer camera is available in single player');
+        else beginObservation();
+      }
+      return;
+    }
+    if (observerView) {
+      if (!event.metaKey && !event.altKey && event.code !== 'Escape') event.preventDefault();
+      if (event.metaKey || event.altKey) return;
+      observer.keydown(event.code);
+      if (!event.repeat) {
+        if (event.code === 'KeyH') observerHud.hidden = !observerHud.hidden;
+        if (event.code === 'KeyI') observerReadout.hidden = !observerReadout.hidden;
+        if (event.code === 'BracketLeft' || event.code === 'BracketRight') {
+          observer.jump(currentTrack, event.code === 'BracketRight' ? 1 : -1);
+        }
+        observerUiDue = 0;
+      }
+      return;
+    }
     if (overlayOpen() || event.ctrlKey || event.metaKey || event.altKey) return;
     if (event.target instanceof HTMLButtonElement && (event.code === 'Space' || event.code === 'Enter')) return;
     const key = event.code;
@@ -871,6 +1131,11 @@ ${car.spec.awd?car.tireTelemetry.map((w,i)=>['FL','FR','RL','RR'][i]+' '+w.surfa
     if (key === 'F2') {event.preventDefault(); byId('debug-panel').hidden = !byId('debug-panel').hidden; sinceUI=1;}
     if (key === 'Escape') setPaused(!paused);
     if (paused) return;
+    if (key === 'Backspace' && recovery) {
+      event.preventDefault();
+      if (canRecover()) applyRecovery();
+      return;
+    }
     const action=bindings.actionFor(key);
     if(action&&supportsShortcut(action)){
       event.preventDefault();
@@ -889,9 +1154,20 @@ ${car.spec.awd?car.tireTelemetry.map((w,i)=>['FL','FR','RL','RR'][i]+' '+w.surfa
       case 'KeyR': reset(); break;
     }
   });
-  window.addEventListener('keyup', event => keys.delete(event.code));
-  window.addEventListener('blur', () => { keys.clear(); looking = false; canvas.style.cursor = ''; });
+  window.addEventListener('keyup', event => {
+    keys.delete(event.code);
+    observer.keyup(event.code);
+  });
+  window.addEventListener('blur', () => {
+    keys.clear(); looking = false; canvas.style.cursor = '';
+    observer.clearInput(); observerDrag = false;
+  });
   document.addEventListener('visibilitychange',()=>{
+    if (observerView) {
+      observer.clearInput();
+      observerDrag = false;
+      clock = performance.now();
+    }
     if(onlineRun&&document.hidden){keys.clear();laps.invalidate('Tab suspended');}
   });
   canvas.addEventListener('contextmenu', event => event.preventDefault());
@@ -903,6 +1179,15 @@ ${car.spec.awd?car.tireTelemetry.map((w,i)=>['FL','FR','RL','RR'][i]+' '+w.surfa
   }
   canvas.addEventListener('pointerdown', (event) => {
     stage.focus({ preventScroll: true });
+    if (observerView) {
+      if (event.button === 2) {
+        observerDrag = true;
+        canvas.setPointerCapture(event.pointerId);
+      } else if (event.button === 0 && document.pointerLockElement !== canvas) {
+        try { void Promise.resolve(canvas.requestPointerLock()).catch(() => {}); } catch { /* Right-drag remains available. */ }
+      }
+      return;
+    }
     if(inGarage){
       if(!switching&&(!overlayOpen()||help.active)&&event.button===0){looking=true;canvas.setPointerCapture(event.pointerId);canvas.style.cursor='grabbing';}
       return;
@@ -918,7 +1203,17 @@ ${car.spec.awd?car.tireTelemetry.map((w,i)=>['FL','FR','RL','RR'][i]+' '+w.surfa
       if (action) applySwitch(action,event.shiftKey);
     }
   });
+  document.addEventListener('mousemove', event => {
+    if (observerView && document.pointerLockElement === canvas) observer.look(event.movementX, event.movementY, sensitivity);
+  });
+  document.addEventListener('pointerlockchange', () => {
+    if (!observerView && document.pointerLockElement === canvas) document.exitPointerLock();
+  });
   canvas.addEventListener('pointermove', (event) => {
+    if (observerView) {
+      if (observerDrag && document.pointerLockElement !== canvas) observer.look(event.movementX, event.movementY, sensitivity);
+      return;
+    }
     if((paused||overlayOpen())&&!help.active)return;
     if(inGarage){if(looking){if(help.active)showroom.guideLook(event.movementX,event.movementY);else showroom.orbit(event.movementX,event.movementY);frameCap=2;}return;}
     if(view==='orbit'){
@@ -944,6 +1239,12 @@ ${car.spec.awd?car.tireTelemetry.map((w,i)=>['FL','FR','RL','RR'][i]+' '+w.surfa
   });
   canvas.addEventListener('pointerleave',()=>{help.hover(undefined);canvas.title='';});
   canvas.addEventListener('wheel',event=>{
+    if (observerView) {
+      event.preventDefault();
+      observer.adjustSpeed(event.deltaY, event.deltaMode);
+      observerUiDue = 0;
+      return;
+    }
     if(inGarage&&!overlayOpen()){event.preventDefault();showroom.zoom(event.deltaY);frameCap=2;return;}
     if(view!=='orbit'||overlayOpen())return;
     event.preventDefault();
@@ -951,7 +1252,7 @@ ${car.spec.awd?car.tireTelemetry.map((w,i)=>['FL','FR','RL','RR'][i]+' '+w.surfa
     frameCap=2;
   },{passive:false});
   for (const type of ['pointerup','pointercancel','lostpointercapture']) {
-    canvas.addEventListener(type, () => { looking = false; canvas.style.cursor = ''; });
+    canvas.addEventListener(type, () => { looking = false; observerDrag = false; canvas.style.cursor = ''; });
   }
 
   byId('test-start-lights').addEventListener('click',()=>{
@@ -989,6 +1290,25 @@ ${car.spec.awd?car.tireTelemetry.map((w,i)=>['FL','FR','RL','RR'][i]+' '+w.surfa
     button.addEventListener('click',()=>void switchVehicle(id));
     carButtons.append(button);
   }
+  const courseButtons:HTMLButtonElement[]=[];
+  for(const track of Object.values(tracks)){
+    const button=document.createElement('button');
+    button.type='button';button.className='course-choice';button.dataset.course=track.id;
+    const preview=document.createElement('canvas');preview.width=145;preview.height=46;preview.setAttribute('aria-hidden','true');
+    const name=document.createElement('b');name.textContent=track.name;
+    const facts=document.createElement('small');
+    facts.textContent=(track.length/1000).toFixed(3)+' km · '+(track.kind==='circuit'?'Circuit':'Point to point')+
+      ' · '+track.surfaceName+' · '+track.cornerCount+' corners';
+    button.append(preview,name,facts);
+    button.addEventListener('click',async()=>{
+      if(await switchTrack(track.id)){
+        try{localStorage.setItem('apex.track',track.id);}catch{}
+      }
+    });
+    byId('course-choices').append(button);
+    drawCourse(preview,track,false);
+    courseButtons.push(button);
+  }
   const busyButtons=['garage-drive','garage-prev','garage-next','garage-audio','garage-lights','garage-special']
     .map(id=>byId<HTMLButtonElement>(id));
   function updateGarage(){
@@ -1002,6 +1322,12 @@ ${car.spec.awd?car.tireTelemetry.map((w,i)=>['FL','FR','RL','RR'][i]+' '+w.surfa
     for(const button of [...busyButtons,...carButtons.querySelectorAll('button')])button.disabled=switching;
     for(const button of carButtons.querySelectorAll('button'))button.setAttribute('aria-pressed',String(button.dataset.vehicle===currentVehicle));
     garage.setAttribute('aria-busy',String(switching));
+    for(const button of courseButtons){
+      button.disabled=switching;
+      button.setAttribute('aria-pressed',String(button.dataset.course===currentTrack.id));
+    }
+    setText(byId('course-description'),currentTrack.description);
+
     setText(byId('garage-name'),entry.name);
     setText(byId('garage-trim'),entry.trim);
     setText(byId('garage-description'),entry.description);
@@ -1019,6 +1345,7 @@ ${car.spec.awd?car.tireTelemetry.map((w,i)=>['FL','FR','RL','RR'][i]+' '+w.surfa
 
   function enterGarage(){
     if(inGarage)return;
+    endObservation();
     inGarage=true;selecting=true;garageError.hidden=true;
     reset(true);settle();testDriver=undefined;
     audio.dispose();audio=new EngineAudio(currentVehicle);audio.volume=Number(volume.value);
@@ -1031,6 +1358,11 @@ ${car.spec.awd?car.tireTelemetry.map((w,i)=>['FL','FR','RL','RR'][i]+' '+w.surfa
     inGarage=false;selecting=false;garageError.hidden=true;
     if(car.running||car.ignition==='START')car.setIgnition();
     scene.add(visual.group);marks.disconnect();laps.cancel();
+    if(currentTrack.kind==='stage'){
+      updateVegetation(car.current.position);
+      dust.warm(renderer,scene,camera);
+      visual.mirrors.warm(renderer,scene,visual.group);
+    }
     clock=performance.now();setView('chase');setPaused(false);snapView=true;
     updateGarage();
   }
@@ -1047,7 +1379,7 @@ ${car.spec.awd?car.tireTelemetry.map((w,i)=>['FL','FR','RL','RR'][i]+' '+w.surfa
       setText(garageError,'Could not load '+vehicles[id].name+'. The current car is still available.');
       switching=false;updateGarage();return;
     }
-    saveRecords(currentVehicle,laps);
+    saveRecords(currentTrack,currentVehicle,laps);
     groundContact.dispose();
     car.dispose();
     disposeVisual(visual);
@@ -1055,14 +1387,61 @@ ${car.spec.awd?car.tireTelemetry.map((w,i)=>['FL','FR','RL','RR'][i]+' '+w.surfa
     renderer.renderLists.dispose();
     currentVehicle=id;visual=next;restoreArms();
     audio=new EngineAudio(id);audio.volume=Number(volume.value);
-    car=new Vehicle(world,vehicles[id].spec);restoreAssist();
-    laps=loadRecords(id);historyShown='';byId('lap-history').replaceChildren();
+    car=new Vehicle(world,vehicles[id].spec,currentTrack.grid[0]);restoreAssist();
+    laps=loadRecords(currentTrack,id);historyShown='';byId('lap-history').replaceChildren();
     groundContact=groundShadow(scene,car);
-    settle();marks.clear();
+    settle();marks.clear();dust.clear();
     try{localStorage.setItem('apex.vehicle',id);}catch{}
     showroom.reset();showroom.scene.add(visual.group);
     switching=false;updateGarage();setDialLight();syncControlPanel();frameCap=10;
   }
+  async function switchTrack(id:TrackId):Promise<boolean>{
+    if(id===currentTrack.id)return true;
+    if(!inGarage||switching||onlineRun)return false;
+    const chosen=tracks[id], pending=byId('course-loading');
+    switching=true;garageError.hidden=true;pending.hidden=false;
+    setText(pending,'Loading '+chosen.name+'…');updateGarage();
+    const started=performance.now();
+    let replacement:Awaited<ReturnType<typeof buildTrack>>|undefined;
+    let nextCar:Vehicle;
+    try{
+      replacement=await buildTrack(chosen,renderer,panorama,wear);
+      nextCar=new Vehicle(replacement.world,vehicles[currentVehicle].spec,chosen.grid[0]);
+      settle(nextCar);
+    }catch(error){
+      replacement?.dispose();
+      console.error(error);garageError.hidden=false;
+      setText(garageError,'Could not load '+chosen.name+'. The current course is still available.');
+      switching=false;pending.hidden=true;updateGarage();
+      return false;
+    }
+    saveRecords(currentTrack,currentVehicle,laps);
+    groundContact.dispose();
+    car.dispose();
+    runtime.dispose();
+    runtime=replacement;
+    ({world,gantry}=runtime);
+    renderer.renderLists.dispose();
+    scene.add(runtime.root);
+    currentTrack=chosen;
+    recovery=chosen.kind==='stage'?new StageRecovery(chosen):undefined;
+    trackLoadMs=performance.now()-started;
+    car=nextCar;
+    restoreAssist();
+    groundContact=groundShadow(scene,car);
+    applyTrackLighting();
+    camera.far=currentTrack.environment.viewDistance;
+    camera.updateProjectionMatrix();
+    marks.clear();dust.clear();
+    laps=loadRecords(currentTrack,currentVehicle);
+    historyShown='';byId('lap-history').replaceChildren();
+    map=makeMinimap(currentTrack);
+    updateTrackLabels();
+    switching=false;pending.hidden=true;
+    updateGarage();frameCap=8;sinceUI=1;
+    return true;
+  }
+
   function cycleVehicle(direction:number){
     const index=vehicleIds.indexOf(currentVehicle);
     return switchVehicle(vehicleIds[(index+direction+vehicleIds.length)%vehicleIds.length]);
@@ -1123,54 +1502,73 @@ ${car.spec.awd?car.tireTelemetry.map((w,i)=>['FL','FR','RL','RR'][i]+' '+w.surfa
   multiplayer=new Multiplayer(scene,{
     vehicle:()=>currentVehicle,
     changeVehicle:switchVehicle,
+    track:()=>trackIdentities[currentTrack.id],
+    changeTrack:switchTrack,
     enter:(session,slot)=>{
+      endObservation();
       onlineRun=session;
       gridSlot=slot;
-      submittedLaps=0;
+      submittedAttempts=0;
       poseReset=0;
-      laps=new LapTiming();
+      laps=newTiming(currentTrack);
       historyShown='';
       byId('reset-timer').hidden=true;
       reset(true);
       settle();
       enterTrack();
       car.setIgnition();
-      setText(byId('track-mode-label'),multiplayer.mode==='challenge'?'BEST LAP CHALLENGE':'ONLINE FREE DRIVE');
+      stageLaunchOnGo=currentTrack.kind==='stage';
+      setText(byId('track-mode-label'),multiplayer.mode==='challenge'?challengeName(multiplayer.track).toUpperCase():'ONLINE FREE DRIVE');
       sinceUI=1;
       stage.focus({preventScroll:true});
     },
     exit:()=>{
-      onlineRun=null;
+      onlineRun=null;stageLaunchOnGo=false;
       gantry.signal.reset();
       enterGarage();
-      laps=loadRecords(currentVehicle);
+      laps=loadRecords(currentTrack,currentVehicle);
       historyShown='';
-      submittedLaps=0;
+      submittedAttempts=0;
       byId('reset-timer').hidden=false;
       setText(byId('track-mode-label'),'FREE DRIVE');
       sinceUI=1;
       byId('play-online').focus({preventScroll:true});
     },
-    interrupted:reason=>{if(onlineRun){keys.clear();laps.invalidate(reason);}},
+    interrupted:expired=>{
+      if(!onlineRun)return;
+      keys.clear();
+      if(expired)laps.invalidate('Connection interrupted');
+    },
     unlockAudio:()=>audio.unlock(),
   });
   if (diagnostic) {
     Object.assign(window, { apexDiagnostics: {
-      inspect:{get laps(){return laps;},marks,wear,get audio(){return audio;},gantry,
-        get visual(){return visual;},get car(){return car;},renderer,camera,scene,T,updateVegetation,sun,skydome,showroom},
+      inspect:{get laps(){return laps;},marks,wear,get audio(){return audio;},get gantry(){return gantry;},
+        get visual(){return visual;},get car(){return car;},get world(){return world;},RAPIER,renderer,camera,scene,T,updateVegetation,sun,skydome,showroom},
       multiplayer:()=>multiplayer.diagnostics,
       timeLapPath(speed:number,cutTrack=false){
         if(!onlineRun||multiplayer.prestart||multiplayer.finished)throw new Error('A session must be running.');
         laps.cancel();
         const spacing=speed*stepTime;
-        for(let d=-.5;d<=courseLength+spacing*2;d+=spacing){
-          const {p,forward,right}=sampleAt(lineDistance+d);
+        if(laps instanceof StageTiming){laps.launch();stageLaunchOnGo=false;}
+        const length=currentTrack.finishDistance-currentTrack.startDistance;
+        for(let d=-.5;d<=length+spacing*2;d+=spacing){
+          const {p,forward,right}=currentTrack.sampleAt(currentTrack.startDistance+d);
           p.y+=.33;
           if(cutTrack&&d>25&&d<27)p.addScaledVector(right,7.2);
           timeLap(p,forward,speed,stepTime);
         }
         return {count:laps.count,best:laps.best,display:laps.sectorDisplay()};
       },
+      placeAtTrack(distance:number,lateral=0){
+        if(inGarage||onlineRun||observerView||!Number.isFinite(distance)||Math.abs(lateral)>18)throw new Error('Use an offline drive for course inspection.');
+        const at=currentTrack.sampleAt(distance), yaw=Math.atan2(-at.forward.x,-at.forward.z);
+        car.reset(false,at.p.addScaledVector(at.right,lateral),{x:0,y:Math.sin(yaw/2),z:0,w:Math.cos(yaw/2)});
+        settle();laps.cancel();marks.disconnect();dust.clear();snapView=true;frameCap=4;sinceUI=1;
+      },
+      clearSamples(){samples.length=physicsSamples.length=0;},
+      dust:()=>dust.stats,
+      setDustEnabled(enabled:boolean){dust.setEnabled(enabled);frameCap=4;},
       setTestDriver(driver:(()=>DriverInput)|undefined){testDriver=driver;},
       state: () => ({
         position: car.current.position.toArray(), direction: car.direction.toArray(),
@@ -1185,8 +1583,10 @@ ${car.spec.awd?car.tireTelemetry.map((w,i)=>['FL','FR','RL','RR'][i]+' '+w.surfa
         carId:currentVehicle,inGarage,frontTorqueShare:car.frontTorqueShare,assist:car.assistMode,
         liveRigidBodies:world.bodies.len(),
         buffer: renderer.getDrawingBufferSize(new T.Vector2()).toArray(),
-        draws: renderer.info.render.calls, triangles: renderer.info.render.triangles,
-        fpsSamples: samples.slice(),
+        draws: renderer.info.render.calls, mirrorDraws:view==='cockpit'?visual.mirrors.drawCalls:0, triangles: renderer.info.render.triangles,
+        fpsSamples:samples.slice(),physicsSamples:physicsSamples.slice(),trackLoadMs,
+        renderMemory:{...renderer.info.memory}, trackId:currentTrack.id,trackRevision:currentTrack.revision,
+        colliderCount:world.colliders.len(),courseRoots:scene.children.filter(object=>Object.values(tracks).some(track=>track.name===object.name)).length,
       }),
       railContact() {
         let touching = false;
@@ -1204,17 +1604,19 @@ ${car.spec.awd?car.tireTelemetry.map((w,i)=>['FL','FR','RL','RR'][i]+' '+w.surfa
         const rect = canvas.getBoundingClientRect();
         return { x: rect.left + (projected.x + 1) * .5 * rect.width, y: rect.top + (1 - projected.y) * .5 * rect.height };
       },
-      advance(steps: number, input: DriverInput) {
-        if (!paused||inGarage) throw new Error('Pause the driving session before stepping diagnostics.');
-        for (let i = 0; i < steps; i++) driveStep(input);
+      advance(steps: number, input: DriverInput|(()=>DriverInput)) {
+        if (!paused||inGarage||observerView) throw new Error('Pause the driving session before stepping diagnostics.');
+        for (let i = 0; i < steps; i++) driveStep(typeof input==='function'?input():input);
         frameCap = 1;
       },
-      stations: stations.map(s => ({ p: s.p.toArray(), right: s.right.toArray(), d: s.distance })),
+      get gates(){return currentTrack.gates.map(g=>({p:g.p.toArray(),d:g.distance}));},
+      get stations(){return currentTrack.minimap.map(s=>({p:s.p.toArray(),right:s.right.toArray(),d:s.distance}));},
     } });
   }
   applyQuality(quality);
   setView('chase');
   stage.dataset.paused = 'false';
+  updateTrackLabels();
   updateUI();
   visual.sync(car, 1);
   updateGarage();
@@ -1229,7 +1631,7 @@ ${car.spec.awd?car.tireTelemetry.map((w,i)=>['FL','FR','RL','RR'][i]+' '+w.surfa
 
 start().catch((error: unknown) => {
   loading.classList.add('error');
-  loading.querySelector('strong')!.textContent = 'The proving ground could not load';
+  loading.querySelector('strong')!.textContent = 'The course could not load';
   byId('load-detail').textContent = error instanceof Error ? error.message : String(error);
   console.error(error);
 });

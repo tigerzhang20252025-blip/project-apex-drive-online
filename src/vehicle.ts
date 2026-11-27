@@ -1,8 +1,9 @@
-import {rallyModes,surfaces,wheelTelemetry} from './rally-dynamics.ts';
+import {rallyModes,surfaceFor,surfaces,wheelTelemetry} from './rally-dynamics.ts';
 import {WiperMotor} from './wiper.ts';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { Quaternion, Vector3 } from 'three';
 import { grid, gridRotation } from './track.ts';
+import type { TrackSpawn } from './tracks.ts';
 
 import { sport, interpolate, drivingAssists, type AssistMode, type VehicleSpec } from './vehicle-spec.ts';
 export { sport } from './vehicle-spec.ts';
@@ -36,7 +37,7 @@ export class Vehicle {
   get isShifting(){return this.shiftTime>0;}
   private previousManualGear=0;
   get pendingManualGear(){
-    return this.spec.transmission&&this.running&&!this.automatic&&this.isShifting&&this.previousManualGear!==this.gear?this.gear:null;
+    return this.spec.transmission.electronic&&this.running&&!this.automatic&&this.isShifting&&this.previousManualGear!==this.gear?this.gear:null;
   }
   get indicatedGear(){return this.pendingManualGear===null?this.gear:this.previousManualGear;}
   get shiftProgress() { return Math.max(0,1-this.shiftTime / this.spec.shiftCut); }
@@ -75,9 +76,11 @@ export class Vehicle {
 
   readonly world: RAPIER.World;
   readonly spec: VehicleSpec;
-  constructor(world: RAPIER.World, spec: VehicleSpec = sport) {
+  private readonly spawn: TrackSpawn;
+  constructor(world: RAPIER.World, spec: VehicleSpec = sport, spawn: TrackSpawn = { position:grid, rotation:gridRotation }) {
     this.world = world;
     this.spec = spec;
+    this.spawn = spawn;
     this.fuelLitres = spec.fuel.capacityLitres;
     this.body = world.createRigidBody(RAPIER.RigidBodyDesc.dynamic()
       .setLinearDamping(.018).setAngularDamping(.32).setCanSleep(false).setCcdEnabled(true));
@@ -153,13 +156,19 @@ export class Vehicle {
   shift(change: number) {
     if (this.automatic) return 'automatic';
     if (!this.running) return 'engine';
-    const target = Math.max(-1, Math.min(this.spec.gears.length, this.gear + change));
+    let target = Math.max(-1, Math.min(this.spec.gears.length, this.gear + change));
     if (target === this.gear) return 'limit';
     if ((target < 0 && this.speed > .45) || (target > 0 && this.signedSpeed < -.45)) return 'direction';
-    if (this.spec.transmission && target > 0 && (this.gear === 0 || target < this.gear)) {
-      const estimated = Math.abs(this.signedSpeed) * 60 / (2 * Math.PI * this.spec.radius)
-        * this.spec.gears[target-1] * this.spec.finalDrive;
-      if (estimated > this.spec.transmission.downshiftRpm) return 'rpm';
+    const estimatedRpm = (gear: number) =>
+      Math.abs(this.signedSpeed) * 60 / (2 * Math.PI * this.spec.radius)
+      * this.spec.gears[gear - 1] * this.spec.finalDrive;
+    if (target > 0 && (this.gear === 0 || target < this.gear)) {
+      if (!this.spec.transmission.electronic && this.gear === 0 && change > 0) {
+        while (target < this.spec.gears.length && estimatedRpm(target) > this.spec.transmission.downshiftRpm) target++;
+      }
+      if (estimatedRpm(target) > this.spec.transmission.downshiftRpm) {
+        return this.spec.transmission.electronic ? 'rpm' : 'synchro';
+      }
     }
     this.previousManualGear=this.gear;
     this.requestGear(target);
@@ -172,9 +181,9 @@ export class Vehicle {
     this.shiftTime = target > 0 ? this.spec.shiftCut : .10;
   }
 
-  reset(restart = false, spawn = grid) {
+  reset(restart = false, spawn = this.spawn.position, rotation = this.spawn.rotation) {
     this.body.setTranslation({ x: spawn.x, y: spawn.y + this.spec.bodyOrigin + .035, z: spawn.z }, true);
-    this.body.setRotation(gridRotation, true);
+    this.body.setRotation(rotation, true);
     this.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
     this.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
     this.body.resetForces(true);
@@ -289,24 +298,33 @@ export class Vehicle {
     const coupledRPM = wheelRPM * ratio * spec.finalDrive;
     const clutch = ratio ? Math.min(1, stableSpeed / 6.5) : 0;
     const freeRPM = spec.idle + Math.pow(this.pedal, .67) * (spec.redline - spec.idle) * (ratio ? .27 : .92);
+    const rpmCap = Math.max(spec.redline + 150, spec.transmission.downshiftRpm);
     this.rpm = this.running ? ramp(this.rpm, Math.max(spec.idle,
-      Math.min(spec.redline + 150, Math.max(coupledRPM, freeRPM * (1 - clutch)))), this.shiftTime > 0 ? 15 : 9, dt) : ramp(this.rpm,this.ignition === 'START' ? 220 : 0,10,dt);
+      Math.min(rpmCap, Math.max(coupledRPM, freeRPM * (1 - clutch)))), this.shiftTime > 0 ? 15 : 9, dt) : ramp(this.rpm,this.ignition === 'START' ? 220 : 0,10,dt);
     const potential = Math.max(0,Math.min(1,(this.rpm-1900)/2200))*spec.turbo.maxBar;
     const targetBoost = this.running && ratio && !this.shiftTime ? potential*this.pedal : 0;
     this.boostBar = ramp(this.boostBar,targetBoost,targetBoost>this.boostBar?spec.turbo.spoolRate:spec.turbo.releaseRate,dt);
 
     if (this.running && this.automatic && this.gear > 0 && this.shiftTime === 0) {
-      const upAt = (spec.transmission?.upshiftRpm ?? 5200) + this.pedal * 1980;
+      const upAt = spec.transmission.upshiftRpm + this.pedal * 1980;
       if (this.rpm > upAt && this.gear < spec.gears.length && this.pedal > .2) this.requestGear(this.gear + 1);
       else if (this.gear > 1 && coupledRPM < 2100 + this.pedal * 580) this.requestGear(this.gear - 1);
     }
     const revCut = Math.max(0, Math.min(1, (spec.redline + 100 - this.rpm) / 260));
     const torque = this.running && !this.shiftTime && brake < .03 && !handbrake
       ? (spec.peakTorque * interpolate(spec.torqueCurve, this.rpm)) * this.pedal * revCut * (1+this.boostBar)/(1+potential) : 0;
-    const reverseLimit = this.gear < 0 ? Math.min(1, Math.max(0, ((spec.transmission?.reverseSpeed ?? 9) - stableSpeed) / 3)) : 1;
+    const reverseLimit = this.gear < 0 ? Math.min(1, Math.max(0, (spec.transmission.reverseSpeed - stableSpeed) / 3)) : 1;
     const engineForce = torque * ratio * spec.finalDrive * spec.drivelineEfficiency / spec.radius * reverseLimit * Math.sign(this.gear);
     const parking = !this.running && this.speed < .4;
-    const coast = this.running && this.gear !== 0 && this.speed > .75 && gas === 0 ? .75 + stableSpeed * .017 : 0;
+    const coast = this.running && this.gear !== 0 && this.speed > .75 && gas === 0 && spec.transmission.electronic ? .75 + stableSpeed * .017 : 0;
+    let engineBrake = 0;
+    if (!spec.transmission.electronic && this.running && ratio > 0 && !this.shiftTime && this.speed > .75) {
+      const rpmFraction = Math.max(0, (Math.max(this.rpm, coupledRPM) - spec.idle) / (spec.redline - spec.idle));
+      const compressionTorque = gas === 0 ? 16 + 88 * Math.min(1.2, rpmFraction) : 0;
+      const overRev = Math.max(0, coupledRPM - spec.redline) / 500;
+      const overRevTorque = overRev > 0 ? 190 * Math.min(1.5, overRev) : 0;
+      engineBrake = (compressionTorque + overRevTorque) * ratio * spec.finalDrive / spec.radius * dt * .5;
+    }
 
     const steerLimit = interpolate(spec.steering.lock, this.speed * 3.6) * Math.PI / 180;
     const wheelbase = Math.abs(spec.wheels[0].z - spec.wheels[2].z);
@@ -325,7 +343,7 @@ export class Vehicle {
     const direction = Math.sign(this.steer);
     this.tcActive = false;
     this.absActive = false;
-    if(spec.awd)this.tireTelemetry.forEach((_,i)=>{this.tireTelemetry[i]=wheelTelemetry(this,i);});
+    if(spec.awd || this.spawn.surface)this.tireTelemetry.forEach((_,i)=>{this.tireTelemetry[i]=wheelTelemetry(this,i);});
     if (spec.awd) {
       // A rear-biased virtual clutch transfers torque when the rear tires are loaded
       // laterally, have reduced surface grip or lose contact. Torque is conserved.
@@ -343,25 +361,31 @@ export class Vehicle {
       const transfer=Math.min(1,this.pedal*.55*(1-Math.min(1,stableSpeed/31))+(rearLoose*.76+rearUse*.64+rearSlip*.7+yawError*.12)*this.pedal)*frontContact;
       this.frontTorqueShare=ramp(this.frontTorqueShare,spec.awd.baseFront+(spec.awd.maxFront-spec.awd.baseFront)*transfer*rallyModes[this.assistMode].transfer,spec.awd.transferRate,dt);
     }
-    let frontDrive=0,rearDrive=0;
+    let frontDrive=0,rearDrive=0,extraRolling=0;
     for (let i = 0; i < spec.wheels.length; i++) {
       const wheel = spec.wheels[i];
-      const onGrass = (controller.wheelGroundObject(i)?.friction() ?? 1) < .5;
+      const ground=controller.wheelGroundObject(i);
+      const friction=ground?.friction() ?? 1;
+      const surface=this.spawn.surface?.[surfaceFor(friction)];
       const baseGrip=wheel.front?spec.tires.frontGrip:spec.tires.rearGrip;
-      let effectiveGrip=onGrass?spec.tires.grassGrip:baseGrip;
+      let effectiveGrip=surface?baseGrip*surface.rwdGrip:friction<.5?spec.tires.grassGrip:baseGrip;
+      if(this.spawn.surface){
+        controller.setWheelSideFrictionStiffness(i,(wheel.front?spec.tires.frontSide:spec.tires.rearSide)*(surface?.lateral??1));
+        if(ground&&surface)extraRolling+=surface.rolling/spec.wheels.length;
+      }
       if(spec.awd){
         const state=this.tireTelemetry[i],mode=rallyModes[this.assistMode];
         // Continuous post-peak envelope, with Rapier retaining all tire impulse solving.
         const sliding=1-Math.exp(-Math.max(0,state.slipAngle-.075)*3.2);
         const loadFactor=Math.max(.91,Math.min(1.04,1-.045*(state.load/(spec.mass*9.81/4)-1)));
-        const target=baseGrip*surfaces[state.surface].grip*(1-(1-mode.slide)*sliding)*loadFactor;
+        const target=baseGrip*(surface?.awdGrip??surfaces[state.surface].grip)*(1-(1-mode.slide)*sliding)*loadFactor;
         this.tireGrip[i]=ramp(this.tireGrip[i],target,14,dt);effectiveGrip=this.tireGrip[i];
       }
       controller.setWheelFrictionSlip(i,effectiveGrip);
       const frontSteering = direction * Math.atan(wheelbase / (radius + direction * wheel.x));
       controller.setWheelSteering(i, wheel.front ? frontSteering : 0);
       // Rapier's tangential brake value is a per-step impulse cap, in N·s.
-      let wheelBrake = brake * (wheel.front ? spec.brakes.frontTorque : spec.brakes.rearTorque) / spec.radius * dt;
+      let wheelBrake = brake * (surface?.braking??1) * (wheel.front ? spec.brakes.frontTorque : spec.brakes.rearTorque) / spec.radius * dt;
       const normalLoad=controller.wheelSuspensionForce(i) ?? 0;
       const grip = normalLoad * effectiveGrip;
       const lateral = Math.min(grip, Math.abs(controller.wheelSideImpulse(i) ?? 0) / dt);
@@ -371,8 +395,8 @@ export class Vehicle {
         this.absActive ||= wheelBrake>limit;
         wheelBrake=Math.min(wheelBrake,limit);
       }
-      controller.setWheelBrake(i, wheelBrake + coast + (wheel.front ? 0 : (handbrake || parking ? spec.brakes.handbrakeTorque / spec.radius * dt : 0)));
-      let drive = engineForce * .5 * (wheel.front ? this.frontTorqueShare : 1-this.frontTorqueShare);
+      controller.setWheelBrake(i, wheelBrake + coast + (wheel.front ? 0 : engineBrake + (handbrake || parking ? spec.brakes.handbrakeTorque / spec.radius * dt : 0)));
+      let drive = engineForce * (surface?.drive??1) * .5 * (wheel.front ? this.frontTorqueShare : 1-this.frontTorqueShare);
       if (this.tractionControl && (wheel.front ? Boolean(spec.awd) : true) && controller.wheelIsInContact(i)) {
         this.tcActive ||= Math.abs(drive) > available + 30;
         drive = Math.sign(drive) * Math.min(Math.abs(drive), available);
@@ -385,7 +409,7 @@ export class Vehicle {
     this.blink = Math.floor(this.time / .37) % 2 === 0;
     // Drag force acceleration is applied through an impulse, avoiding accumulated user forces.
     const drag = .5 * spec.aero.airDensity * spec.aero.dragArea * this.speed;
-    const rolling = spec.aero.rollingCoefficient * spec.mass * 9.81 / Math.max(2, this.speed);
+    const rolling = (spec.aero.rollingCoefficient + extraRolling) * spec.mass * 9.81 / Math.max(2, this.speed);
     this.body.applyImpulse(this.dragImpulse.set(this.velocity.x, 0, this.velocity.z).multiplyScalar(-(drag + rolling) * dt), true);
     if (this.running) {
       const kW = torque * this.rpm * Math.PI / 30000;
