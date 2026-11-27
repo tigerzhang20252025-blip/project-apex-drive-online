@@ -483,15 +483,18 @@ async function start() {
     switch(action){
       case 'shift-up':
       case 'shift-down': {
-        const result=car.spec.transmission&&!car.automatic&&car.running&&car.isShifting?'busy':car.shift(action==='shift-up'?1:-1);
+        const result=!car.automatic&&car.running&&car.isShifting?'busy':car.shift(action==='shift-up'?1:-1);
         const reasons={
           automatic:'Switch to manual to select gears',engine:'Start the engine before shifting',
           direction:'Stop before changing driving direction',rpm:'Downshift blocked by engine speed',
+          synchro:'Gear blocked by synchronizer — speed too high',
           limit:action==='shift-up'?'Already in the highest gear':'Already in reverse',busy:'Shift in progress',
         };
         if(result==='accepted'){
           visual.animateControl?.(action);
           audio.shiftCue(car.gear,view==='cockpit');
+        }else if(result==='synchro'){
+          audio.synchroGrind(view==='cockpit');
         }
         message=result==='accepted'?(car.pendingManualGear===null?'Gear ':'Shift requested → ')+gearText(car.gear):reasons[result];
         break;

@@ -9,6 +9,7 @@ export const sport = {
   turbo: {maxBar:1.1, spoolRate:1.85, releaseRate:5.9},
   finalDrive: 3.92, gears: [2.77,1.72,1.23,.96,.77], reverse: 2.86,
   drivelineEfficiency: .89, shiftCut: .26, throttleRise: 10.5, throttleRelease: 15,
+  transmission: {downshiftRpm:8150, reverseSpeed:9, upshiftRpm:5200, electronic:false},
   wheels: [
     {x:-.805, z:-1.243, front:true}, {x:.805, z:-1.243, front:true},
     {x:-.805, z:1.207, front:false}, {x:.805, z:1.207, front:false},
@@ -32,7 +33,6 @@ export const sport = {
 };
 export type VehicleSpec = typeof sport & {
   awd?: {baseFront:number; maxFront:number; transferRate:number};
-  transmission?: {downshiftRpm:number; reverseSpeed:number; upshiftRpm:number};
   chassisSections?: number[][];
 };
 
@@ -61,7 +61,7 @@ export const rally: VehicleSpec = {
   aero:{airDensity:1.225,dragArea:.83,rollingCoefficient:.019},
   fuel:{capacityLitres:74,idleLitresPerHour:1.18,gramsPerKwh:298,kgPerLitre:.745},
   awd:{baseFront:.18,maxFront:.50,transferRate:5.2},
-  transmission:{downshiftRpm:7000,reverseSpeed:7.5,upshiftRpm:5050},
+  transmission:{downshiftRpm:7000,reverseSpeed:7.5,upshiftRpm:5050,electronic:true},
   chassisSections:[[-2.29,.78,-.145,.19],[-1.38,.91,-.225,.35],[1.39,.91,-.225,.48],[2.30,.81,-.12,.35]],
 };
 

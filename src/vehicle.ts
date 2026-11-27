@@ -36,7 +36,7 @@ export class Vehicle {
   get isShifting(){return this.shiftTime>0;}
   private previousManualGear=0;
   get pendingManualGear(){
-    return this.spec.transmission&&this.running&&!this.automatic&&this.isShifting&&this.previousManualGear!==this.gear?this.gear:null;
+    return this.spec.transmission.electronic&&this.running&&!this.automatic&&this.isShifting&&this.previousManualGear!==this.gear?this.gear:null;
   }
   get indicatedGear(){return this.pendingManualGear===null?this.gear:this.previousManualGear;}
   get shiftProgress() { return Math.max(0,1-this.shiftTime / this.spec.shiftCut); }
@@ -153,13 +153,19 @@ export class Vehicle {
   shift(change: number) {
     if (this.automatic) return 'automatic';
     if (!this.running) return 'engine';
-    const target = Math.max(-1, Math.min(this.spec.gears.length, this.gear + change));
+    let target = Math.max(-1, Math.min(this.spec.gears.length, this.gear + change));
     if (target === this.gear) return 'limit';
     if ((target < 0 && this.speed > .45) || (target > 0 && this.signedSpeed < -.45)) return 'direction';
-    if (this.spec.transmission && target > 0 && (this.gear === 0 || target < this.gear)) {
-      const estimated = Math.abs(this.signedSpeed) * 60 / (2 * Math.PI * this.spec.radius)
-        * this.spec.gears[target-1] * this.spec.finalDrive;
-      if (estimated > this.spec.transmission.downshiftRpm) return 'rpm';
+    const estimatedRpm = (gear: number) =>
+      Math.abs(this.signedSpeed) * 60 / (2 * Math.PI * this.spec.radius)
+      * this.spec.gears[gear - 1] * this.spec.finalDrive;
+    if (target > 0 && (this.gear === 0 || target < this.gear)) {
+      if (!this.spec.transmission.electronic && this.gear === 0 && change > 0) {
+        while (target < this.spec.gears.length && estimatedRpm(target) > this.spec.transmission.downshiftRpm) target++;
+      }
+      if (estimatedRpm(target) > this.spec.transmission.downshiftRpm) {
+        return this.spec.transmission.electronic ? 'rpm' : 'synchro';
+      }
     }
     this.previousManualGear=this.gear;
     this.requestGear(target);
@@ -289,24 +295,33 @@ export class Vehicle {
     const coupledRPM = wheelRPM * ratio * spec.finalDrive;
     const clutch = ratio ? Math.min(1, stableSpeed / 6.5) : 0;
     const freeRPM = spec.idle + Math.pow(this.pedal, .67) * (spec.redline - spec.idle) * (ratio ? .27 : .92);
+    const rpmCap = Math.max(spec.redline + 150, spec.transmission.downshiftRpm);
     this.rpm = this.running ? ramp(this.rpm, Math.max(spec.idle,
-      Math.min(spec.redline + 150, Math.max(coupledRPM, freeRPM * (1 - clutch)))), this.shiftTime > 0 ? 15 : 9, dt) : ramp(this.rpm,this.ignition === 'START' ? 220 : 0,10,dt);
+      Math.min(rpmCap, Math.max(coupledRPM, freeRPM * (1 - clutch)))), this.shiftTime > 0 ? 15 : 9, dt) : ramp(this.rpm,this.ignition === 'START' ? 220 : 0,10,dt);
     const potential = Math.max(0,Math.min(1,(this.rpm-1900)/2200))*spec.turbo.maxBar;
     const targetBoost = this.running && ratio && !this.shiftTime ? potential*this.pedal : 0;
     this.boostBar = ramp(this.boostBar,targetBoost,targetBoost>this.boostBar?spec.turbo.spoolRate:spec.turbo.releaseRate,dt);
 
     if (this.running && this.automatic && this.gear > 0 && this.shiftTime === 0) {
-      const upAt = (spec.transmission?.upshiftRpm ?? 5200) + this.pedal * 1980;
+      const upAt = spec.transmission.upshiftRpm + this.pedal * 1980;
       if (this.rpm > upAt && this.gear < spec.gears.length && this.pedal > .2) this.requestGear(this.gear + 1);
       else if (this.gear > 1 && coupledRPM < 2100 + this.pedal * 580) this.requestGear(this.gear - 1);
     }
     const revCut = Math.max(0, Math.min(1, (spec.redline + 100 - this.rpm) / 260));
     const torque = this.running && !this.shiftTime && brake < .03 && !handbrake
       ? (spec.peakTorque * interpolate(spec.torqueCurve, this.rpm)) * this.pedal * revCut * (1+this.boostBar)/(1+potential) : 0;
-    const reverseLimit = this.gear < 0 ? Math.min(1, Math.max(0, ((spec.transmission?.reverseSpeed ?? 9) - stableSpeed) / 3)) : 1;
+    const reverseLimit = this.gear < 0 ? Math.min(1, Math.max(0, (spec.transmission.reverseSpeed - stableSpeed) / 3)) : 1;
     const engineForce = torque * ratio * spec.finalDrive * spec.drivelineEfficiency / spec.radius * reverseLimit * Math.sign(this.gear);
     const parking = !this.running && this.speed < .4;
-    const coast = this.running && this.gear !== 0 && this.speed > .75 && gas === 0 ? .75 + stableSpeed * .017 : 0;
+    const coast = this.running && this.gear !== 0 && this.speed > .75 && gas === 0 && spec.transmission.electronic ? .75 + stableSpeed * .017 : 0;
+    let engineBrake = 0;
+    if (!spec.transmission.electronic && this.running && ratio > 0 && !this.shiftTime && this.speed > .75) {
+      const rpmFraction = Math.max(0, (Math.max(this.rpm, coupledRPM) - spec.idle) / (spec.redline - spec.idle));
+      const compressionTorque = gas === 0 ? 16 + 88 * Math.min(1.2, rpmFraction) : 0;
+      const overRev = Math.max(0, coupledRPM - spec.redline) / 500;
+      const overRevTorque = overRev > 0 ? 190 * Math.min(1.5, overRev) : 0;
+      engineBrake = (compressionTorque + overRevTorque) * ratio * spec.finalDrive / spec.radius * dt * .5;
+    }
 
     const steerLimit = interpolate(spec.steering.lock, this.speed * 3.6) * Math.PI / 180;
     const wheelbase = Math.abs(spec.wheels[0].z - spec.wheels[2].z);
@@ -371,7 +386,7 @@ export class Vehicle {
         this.absActive ||= wheelBrake>limit;
         wheelBrake=Math.min(wheelBrake,limit);
       }
-      controller.setWheelBrake(i, wheelBrake + coast + (wheel.front ? 0 : (handbrake || parking ? spec.brakes.handbrakeTorque / spec.radius * dt : 0)));
+      controller.setWheelBrake(i, wheelBrake + coast + (wheel.front ? 0 : engineBrake + (handbrake || parking ? spec.brakes.handbrakeTorque / spec.radius * dt : 0)));
       let drive = engineForce * .5 * (wheel.front ? this.frontTorqueShare : 1-this.frontTorqueShare);
       if (this.tractionControl && (wheel.front ? Boolean(spec.awd) : true) && controller.wheelIsInContact(i)) {
         this.tcActive ||= Math.abs(drive) > available + 30;

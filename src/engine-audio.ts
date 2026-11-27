@@ -98,6 +98,12 @@ export class EngineAudio {
     this.sweep(this.profile==='r35'?760:570,this.profile==='r35'?280:210,.067,.084*proximity,'triangle');
   }
 
+  synchroGrind(interior:boolean){
+    if(this.volume===0)return;
+    this.burst(2450,.11,interior?.24:.12,3.4);
+    this.sweep(410,295,.095,interior?.095:.045,'sawtooth');
+  }
+
   update(car:Vehicle,camera:T.Camera,interior:boolean,active:boolean){
     const ctx=this.ctx,node=this.engine;if(!ctx||!node)return;
     const time=ctx.currentTime;
