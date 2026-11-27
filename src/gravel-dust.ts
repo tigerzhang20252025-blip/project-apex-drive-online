@@ -1,7 +1,7 @@
 import * as T from 'three';
 import { mirrorExcludedLayer } from './mirrors.ts';
 import RAPIER from '@dimforge/rapier3d-compat';
-import { maxDustRate, type DustRates } from '../multiplayer-poc/src/game.ts';
+import { maxDustRate, type DustRates } from '../shared/game.ts';
 import { surfaceFor, type SurfaceName } from './rally-dynamics.ts';
 import type { DustSurface } from './pineglass-dust-profile.ts';
 import type { RemoteCar } from './remote-car.ts';

@@ -1,6 +1,6 @@
 import * as T from 'three';
-import type { DustRates, LivePose } from '../multiplayer-poc/src/game.ts';
-import type { Relay } from '../multiplayer-poc/src/protocol.ts';
+import type { DustRates, LivePose } from '../shared/game.ts';
+import type { Relay } from '../shared/protocol.ts';
 
 const sendPeriodMs = 1000 / 15;
 const minDelayMs = 150;

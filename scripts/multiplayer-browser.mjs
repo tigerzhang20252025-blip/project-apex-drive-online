@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import { defaultTrack, isTrackId, trackIdentities } from '../multiplayer-poc/src/tracks.ts';
+import { defaultTrack, isTrackId, trackIdentities } from '../shared/tracks.ts';
 import { launchTestBrowser } from './test-browser.mjs';
 
 const base = process.argv[2] ?? 'http://127.0.0.1:4187/';

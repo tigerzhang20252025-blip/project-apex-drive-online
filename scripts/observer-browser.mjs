@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { launchTestBrowser } from './test-browser.mjs';
-import { trackIdentities } from '../multiplayer-poc/src/tracks.ts';
+import { trackIdentities } from '../shared/tracks.ts';
 
 const base = process.argv[2] ?? 'http://127.0.0.1:4181/';
 const output = process.argv[3] ?? 'test-evidence/observer';

@@ -1,7 +1,7 @@
 import { Vector3 } from 'three';
 import {
   defaultTrack, trackIdentities, type TrackId,
-} from '../multiplayer-poc/src/tracks.ts';
+} from '../shared/tracks.ts';
 import {
   checkpointGates, SECTOR_LAYOUT_ID, sectorBoundaryIndices,
 } from './lap-timing.ts';

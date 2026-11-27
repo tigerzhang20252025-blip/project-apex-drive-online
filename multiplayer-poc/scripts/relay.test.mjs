@@ -3,7 +3,7 @@ import { mkdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import test from 'node:test';
-import { maxFrameSize } from '../src/protocol.ts';
+import { maxFrameSize } from '../../shared/protocol.ts';
 import { launchTestBrowser } from '../../scripts/test-browser.mjs';
 
 const base = 'http://127.0.0.1:8788';

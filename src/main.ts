@@ -1,6 +1,6 @@
 import {Multiplayer} from './multiplayer.ts';
-import {lightFlags, type Progress, type Seat, type Session, type VehicleSample} from '../multiplayer-poc/src/game.ts';
-import {challengeName,defaultTrack,isTrackId,trackIdentities,type TrackId} from '../multiplayer-poc/src/tracks.ts';
+import {lightFlags, type Progress, type Seat, type Session, type VehicleSample} from '../shared/game.ts';
+import {challengeName,defaultTrack,isTrackId,trackIdentities,type TrackId} from '../shared/tracks.ts';
 import {ChaseCamera,type ChasePreset} from './chase-camera.ts';
 import {ObserverCamera,inspectObserverRoad} from './observer-camera.ts';
 import {StageTiming} from './stage-timing.ts';

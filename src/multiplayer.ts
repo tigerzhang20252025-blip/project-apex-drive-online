@@ -1,13 +1,13 @@
 import type { Scene } from 'three';
 import {
   finishGraceMs, gameVersion, isCar, isMode,
-} from '../multiplayer-poc/src/game.ts';
+} from '../shared/game.ts';
 import type {
   CarId, CompletionCommand, GameCommand, LiveRoom, Player, Progress, Result, Seat, Session, Splits, VehicleSample,
-} from '../multiplayer-poc/src/game.ts';
-import { attemptName, challengeName, defaultTrack, isTrackId, trackIdentities, type TrackId, type TrackIdentity } from '../multiplayer-poc/src/tracks.ts';
-import { protocol } from '../multiplayer-poc/src/protocol.ts';
-import type { Ack, Grant, ServerMessage } from '../multiplayer-poc/src/protocol.ts';
+} from '../shared/game.ts';
+import { attemptName, challengeName, defaultTrack, isTrackId, trackIdentities, type TrackId, type TrackIdentity } from '../shared/tracks.ts';
+import { protocol } from '../shared/protocol.ts';
+import type { Ack, Grant, ServerMessage } from '../shared/protocol.ts';
 import { lapTime, sectorTime } from './lap-timing.ts';
 import { RemoteCar } from './remote-car.ts';
 import { vehicles } from './vehicle-registry.ts';

@@ -1,9 +1,9 @@
-import { defaultTrack, isTrackId } from './tracks.ts';
+import { defaultTrack, isTrackId } from '../../shared/tracks.ts';
 export { Directory } from './directory.ts';
 export { Room } from './room.ts';
-import { gameVersion, isCar } from './game.ts';
+import { gameVersion, isCar } from '../../shared/game.ts';
 import { roomLifetimeMs } from './directory.ts';
-import { jsonObject, objectIdPattern, protocol, roomCodePattern, tokenPattern } from './protocol.ts';
+import { jsonObject, objectIdPattern, protocol, roomCodePattern, tokenPattern } from '../../shared/protocol.ts';
 
 function loopback(host: string) {
   return host === '127.0.0.1' || host === 'localhost';

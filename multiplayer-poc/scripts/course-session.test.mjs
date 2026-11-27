@@ -1,9 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { restoreGameCourse, updateGame, viewGame } from '../src/game-room.ts';
-import { maxFrameSize, poseFrom } from '../src/protocol.ts';
-import { finishGraceMs, livePoseFrom } from '../src/game.ts';
-import { defaultTrack, trackIdentities } from '../src/tracks.ts';
+import { maxFrameSize, poseFrom } from '../../shared/protocol.ts';
+import { finishGraceMs, livePoseFrom } from '../../shared/game.ts';
+import { defaultTrack, trackIdentities } from '../../shared/tracks.ts';
 
 test('Only finishes for the selected Alpine revision score in a room',()=>{
   const members=[1,2].map(slot=>({slot,generation:'connection-'+slot,driver:{name:'Driver '+slot,vehicle:'f40',ready:false}}));

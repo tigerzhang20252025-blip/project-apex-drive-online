@@ -1,6 +1,6 @@
 import type * as T from 'three';
-import type { CarId } from '../multiplayer-poc/src/game.ts';
-import type { Relay } from '../multiplayer-poc/src/protocol.ts';
+import type { CarId } from '../shared/game.ts';
+import type { Relay } from '../shared/protocol.ts';
 import { RemoteMotion } from './remote-motion.ts';
 import { vehicles } from './vehicle-registry.ts';
 import { disposeVisual, type VehicleVisual } from './vehicle-visual.ts';

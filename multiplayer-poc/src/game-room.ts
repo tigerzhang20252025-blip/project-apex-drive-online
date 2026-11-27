@@ -1,8 +1,8 @@
-import { attemptName, defaultTrack, isTrackId, trackIdentities, type TrackId } from './tracks.ts';
+import { attemptName, defaultTrack, isTrackId, trackIdentities, type TrackId } from '../../shared/tracks.ts';
 import {
   challengeMs, countdownMs, finishGraceMs, isCar, isMode, playerName, progressFrom, validSplits,
-} from './game.ts';
-import type { DriverProfile, GameNotice, LiveRoom, Result, Seat, Session, SessionMode } from './game.ts';
+} from '../../shared/game.ts';
+import type { DriverProfile, GameNotice, LiveRoom, Result, Seat, Session, SessionMode } from '../../shared/game.ts';
 
 export type GameMember = { slot: Seat; generation: string | null; driver: DriverProfile };
 export type GameState = { host: Seat; mode: SessionMode; session: Session | null; track?: TrackId; lobbyChanges?: number; lastFinish?: Partial<Record<Seat, number>> };

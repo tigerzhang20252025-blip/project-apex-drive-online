@@ -7,7 +7,7 @@ import {createMountainGround} from '../src/pineglass-greybox.ts';
 import {addPineglassColliders,pineglassFriction} from '../src/pineglass-ground.ts';
 import {tracks} from '../src/tracks.ts';
 import {StageTiming} from '../src/stage-timing.ts';
-import {trackIdentities} from '../multiplayer-poc/src/tracks.ts';
+import {trackIdentities} from '../shared/tracks.ts';
 
 test('Pineglass 2.0 shares its multiplayer identity and spawns behind ordered stage gates',()=>{
   const track=tracks['pineglass-run-v2'];

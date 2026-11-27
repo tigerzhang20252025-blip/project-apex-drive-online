@@ -1,5 +1,5 @@
-import type { Rate, Relay } from './protocol.ts';
-import { rates } from './protocol.ts';
+import type { Rate, Relay } from '../../shared/protocol.ts';
+import { rates } from '../../shared/protocol.ts';
 
 const round = (value: number) => Math.round(value * 100) / 100;
 

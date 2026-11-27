@@ -9,7 +9,7 @@ import {Driver} from './driver.ts';
 import {Mirrors} from './mirrors.ts';
 import {asset} from './environment.ts';
 import {buildCabin,type Switch} from './f40-cabin.ts';
-import {lightFlags} from '../multiplayer-poc/src/game.ts';
+import {lightFlags} from '../shared/game.ts';
 import type {Vehicle} from './vehicle.ts';
 export type {Switch};
 export class CarVisual {

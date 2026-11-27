@@ -1,11 +1,11 @@
-import { defaultTrack, type TrackId } from './tracks.ts';
+import { defaultTrack, type TrackId } from '../../shared/tracks.ts';
 import { DurableObject } from 'cloudflare:workers';
-import { ackFrom, isSequence, jsonObject, maxFrameSize, poseFrom, protocol } from './protocol.ts';
-import { finishGraceMs, isCar, livePoseFrom, playerName } from './game.ts';
-import type { DriverProfile, Seat } from './game.ts';
+import { ackFrom, isSequence, jsonObject, maxFrameSize, poseFrom, protocol } from '../../shared/protocol.ts';
+import { finishGraceMs, isCar, livePoseFrom, playerName } from '../../shared/game.ts';
+import type { DriverProfile, Seat } from '../../shared/game.ts';
 import { losePlayer, restoreGameCourse, updateGame, viewGame } from './game-room.ts';
 import type { GameState } from './game-room.ts';
-import type { Ack, Grant, ServerMessage } from './protocol.ts';
+import type { Ack, Grant, ServerMessage } from '../../shared/protocol.ts';
 
 const ticketMs = 30_000;
 const resumeMs = 45_000;
