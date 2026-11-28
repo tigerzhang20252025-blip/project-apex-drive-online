@@ -938,7 +938,10 @@ ${car.spec.awd?car.tireTelemetry.map((w,i)=>['FL','FR','RL','RR'][i]+' '+w.surfa
     ignition.setAttribute('aria-label',car.running?'Stop engine':'Start engine');
     ignition.classList.toggle('engaged', car.running);
     ignition.setAttribute('aria-pressed', String(car.running));
-    setText(status, car.running ? 'ENGINE RUNNING' : car.ignition==='OUT' ? 'KEY REMOVED' : 'IGNITION '+car.ignition);
+    const stoppedStatus=currentVehicle==='r35'
+      ? (car.ignition==='START'?'STARTING ENGINE':'ENGINE OFF')
+      : (car.ignition==='OUT'?'KEY REMOVED':'IGNITION '+car.ignition);
+    setText(status,car.running?'ENGINE RUNNING':stoppedStatus);
     engineDot.classList.toggle('on', car.running);
     const signal = car.blink ? (car.turn === -1 ? '◀' : car.turn === 1 ? '▶' : car.turn === 2 ? '◀ ▶' : '') : '';
     setText(labels.signal, [car.lights ? 'LAMPS' : '', signal, car.wiper.mode==='OFF'?'':'WIPER '+car.wiper.mode].filter(Boolean).join(' · '));
@@ -1243,6 +1246,11 @@ ${car.spec.awd?car.tireTelemetry.map((w,i)=>['FL','FR','RL','RR'][i]+' '+w.surfa
     }
     if (!help.active&&view==='cockpit'&&event.button === 0 && !looking) {
       const action = clickTarget(event.clientX,event.clientY);
+      if (action==='ignition'&&currentVehicle==='r35'&&!car.running&&car.ignition!=='START'&&!driverInput().brake) {
+        visual.animateControl?.(action);
+        notify('Press the brake to start the engine');
+        return;
+      }
       if (action) applySwitch(action,event.shiftKey);
     }
   });

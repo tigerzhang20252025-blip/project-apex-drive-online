@@ -93,6 +93,15 @@ export function buildCabin(parent:T.Group,hitTargets:T.Mesh[]){
   const rocker=part(switchMount,rounded(.043,.022,.013,.003),rubber,0,0,.011);
   rocker.userData.action='popup';hitTargets.push(rocker);
   part(rocker,new T.PlaneGeometry(.037,.015),label('LIFT'),0,0,.007);
+
+  const modeMount=new T.Group();modeMount.name='Transmission mode switch';modeMount.position.set(.012,-.111,.009);aux.add(modeMount);
+  part(modeMount,rounded(.078,.026,.016,.004),brushed);
+  const modeRocker=part(modeMount,rounded(.069,.020,.012,.003),rubber,0,0,.010);
+  modeRocker.userData.action='transmission';hitTargets.push(modeRocker);
+  const autoLabel=label('AUTO'),manualLabel=label('MAN');
+  part(modeRocker,new T.PlaneGeometry(.031,.014),autoLabel,-.017,0,.0065);
+  part(modeRocker,new T.PlaneGeometry(.030,.014),manualLabel,.017,0,.0065);
+
   const lamp=new T.MeshBasicMaterial();part(panel,cylinder(.004,.003),lamp,0,.055,.004);
   const lock=new T.Group();lock.name='Ignition lock';lock.position.set(-.548,.702,-.563);lock.rotation.x=-.25;parent.add(lock);
   part(lock,cylinder(.034,.020),dark);part(lock,cylinder(.024,.014),alloy,0,0,.010);
@@ -143,6 +152,9 @@ export function buildCabin(parent:T.Group,hitTargets:T.Mesh[]){
   const leverUp=new T.Vector3(0,1,0),leverAim=new T.Vector3();
   function sync(car:Vehicle,popupsOpen:boolean){
     rocker.rotation.x=popupsOpen?-.23:.23;
+    modeRocker.rotation.y=car.automatic?-.14:.14;
+    autoLabel.color.setHex(car.automatic?0xffb767:0xb8b8b8);
+    manualLabel.color.setHex(car.automatic?0xb8b8b8:0xffb767);
     wiperSwitch.rotation.z={OFF:0,LOW:.12,HIGH:.23}[car.wiper.mode];
     instruments.sync(car);
     const values=[car.blink&&(car.turn===-1||car.turn===2),car.lights,car.blink&&(car.turn===1||car.turn===2),car.turn===2,car.parkingBrake,car.tractionControl];

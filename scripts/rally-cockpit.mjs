@@ -77,6 +77,11 @@ try{
   }
 
   await click('ignition','console');
+  assert.equal(await page.evaluate(()=>window.apexDiagnostics.inspect.car.ignition),'OUT');
+  await page.locator('#control-notification').filter({hasText:'Press the brake to start the engine'}).waitFor();
+  await page.keyboard.down('s');
+  try { await click('ignition','console'); }
+  finally { await page.keyboard.up('s'); }
   await page.waitForFunction(()=>window.apexDiagnostics.inspect.car.running);
   await neutralView();
   await photo('after');

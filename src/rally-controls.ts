@@ -81,7 +81,21 @@ export function buildRallyControls(body:T.Group,parent:T.Group,targets:T.Mesh[])
   parent.updateWorldMatrix(true,true);
   detachDashPart(body,parent,start,[-.088,.6284,.040],[-.048,.6337,.080]);
   detachDashPart(body,parent,selector,[-.046,.633,-.177],[.011,.737,-.104]);
-  const startFace=part(start,new T.CircleGeometry(.0139,36).rotateX(-Math.PI/2),engravedFace('START','#ded4c7','#713831'),0,.0018,0);
+  const legend=document.createElement('canvas');legend.width=legend.height=128;
+  const ink=legend.getContext('2d')!;
+  const paint=ink.createLinearGradient(0,0,0,128);
+  paint.addColorStop(0,'#872e27');paint.addColorStop(1,'#501b17');
+  ink.fillStyle=paint;ink.fillRect(0,0,128,128);
+  ink.strokeStyle='#a45445';ink.lineWidth=3;
+  ink.beginPath();ink.arc(64,64,59,0,Math.PI*2);ink.stroke();
+  ink.fillStyle='#f3e6d8';ink.font='700 19px system-ui';
+  ink.textAlign='center';ink.textBaseline='middle';
+  for(const [index,line] of ['ENGINE','START','STOP'].entries())ink.fillText(line,64,42+22*index,88);
+  const startMap=new T.CanvasTexture(legend);startMap.colorSpace=T.SRGBColorSpace;startMap.anisotropy=4;
+  const startMaterial=new T.MeshStandardMaterial({
+    map:startMap,roughness:.59,emissive:0xffffff,emissiveMap:startMap,emissiveIntensity:.18,
+  });
+  const startFace=part(start,new T.CircleGeometry(.0139,36).rotateX(-Math.PI/2),startMaterial,0,.0018,0);
   startFace.castShadow=false;
   hitArea(start,targets,'ignition',[.048,.020,.048],0,.004,0);
   const selectorTrim=part(selector,new T.PlaneGeometry(.023,.009),engravedFace('A/M'),.002,.062,.0435);

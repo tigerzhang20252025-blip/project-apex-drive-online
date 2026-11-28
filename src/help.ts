@@ -54,6 +54,11 @@ function state(car:Vehicle,visual:VehicleVisual,action:string){
   }
 }
 export function cockpitHint(car:Vehicle,visual:VehicleVisual,action:ControlAction,zh=false){
+  if(action==='ignition'&&car.spec.awd){
+    return zh
+      ? '发动机启动与停止 · 按住刹车并点击舱内按钮启动。也可按 '+keyFor(action)+' 或点击 HUD 启动。'
+      : 'Engine start / stop · Hold the brake and click to start, or use '+keyFor(action)+' or the HUD.';
+  }
   const entry=names[action];return entry?entry[zh?1:0]+' · '+state(car,visual,action)+' · '+keyFor(action):action;
 }
 export function controlReference(car:Vehicle,visual:VehicleVisual,zh=false){
