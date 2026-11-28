@@ -89,9 +89,9 @@ export const createMountainGround=()=>createPineglassGround(route,{
 });
 
 export async function buildPineglassMountain(root:T.Object3D,world:RAPIER.World,renderer:T.WebGLRenderer,textures:Set<T.Texture>){
-  const {parts,groundY,gridHeight}=createMountainGround();
+  const {parts,groundY,gridHeight,tileBounds}=createMountainGround();
   addPineglassColliders(world,parts);
   const rock = dressMountainSurface(root,parts,gridHeight,renderer,textures);
   buildMountainProtection(root,world);
-  return await dressMountainLandscape(root,groundY,mountainMasses,rock);
+  return await dressMountainLandscape(root,groundY,mountainMasses,rock,tileBounds);
 }

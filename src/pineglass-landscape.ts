@@ -2,7 +2,7 @@ import * as T from 'three';
 import { asset, loadMap, rng, signTexture } from './environment.ts';
 import { plantForest } from './forest.ts';
 import { surfaceNoise, weatheredConcrete } from './pineglass-materials.ts';
-import type { GroundPart } from './pineglass-ground.ts';
+import { pineglassGroundCellSize, type GroundPart } from './pineglass-ground.ts';
 import { mountainAlignment as route, mountainGorge, mountainQuarry, mountainSectors, mountainShoulderWidth, mountainUndulation } from './pineglass-v2.ts';
 import { gorgeRiverPoint, viaductPoint } from './pineglass-gorge.ts';
 import { mirrorExcludedLayer } from './mirrors.ts';
@@ -154,10 +154,11 @@ export function dressMountainSurface(root: T.Object3D, parts: readonly GroundPar
   return rock;
 }
 
-function skyline(root: T.Object3D, height: Height) {
-  // Distant terrain continues under the local tiles. Its coarse mesh is visual only.
+function skyline(root: T.Object3D, height: Height, groundY: Height, tileBounds: T.Box2) {
   const extent = bounds.clone().expandByScalar(2400);
-  const horizon = new T.PlaneGeometry(extent.max.x-extent.min.x,extent.max.z-extent.min.z,107,78).rotateX(-Math.PI/2);
+  const columns=107, rows=78, stride=columns+1;
+  const width=extent.max.x-extent.min.x, depth=extent.max.z-extent.min.z;
+  const horizon = new T.PlaneGeometry(width,depth,columns,rows).rotateX(-Math.PI/2);
   const midpoint = extent.getCenter(new T.Vector3());
   horizon.translate(midpoint.x,0,midpoint.z);
   const close = bounds.clone().expandByScalar(638);
@@ -174,24 +175,76 @@ function skyline(root: T.Object3D, height: Height) {
   };
   const position = horizon.getAttribute('position');
   const colors: number[] = [];
-  const held = new Set<number>();
   const moss = new T.Color(0x5d7166), slate = new T.Color(0x899397), tint = new T.Color();
-  for (let i=0; i<position.count; i++) {
-    const x=position.getX(i), z=position.getZ(i);
-    const local = x>close.min.x && x<close.max.x && z>close.min.z && z<close.max.z;
-    const border=Math.max(close.min.x-x,x-close.max.x,close.min.z-z,z-close.max.z);
-    const y = height(x,z)+smoothstep(border,0,370)*ridges(x,z);
-    if (local) held.add(i);
-    position.setY(i,y-(local ? 15 : 2));
+  const addColor=(x:number,z:number,y:number)=>{
     tint.copy(moss).lerp(slate,smoothstep(y,340,800)).multiplyScalar(.89+.11*smoothstep(ridges(x,z),-60,150));
     colors.push(tint.r,tint.g,tint.b);
+  };
+  for (let i=0; i<position.count; i++) {
+    const x=position.getX(i), z=position.getZ(i);
+    const border=Math.max(close.min.x-x,x-close.max.x,close.min.z-z,z-close.max.z);
+    const y = height(x,z)+smoothstep(border,0,370)*ridges(x,z);
+    position.setY(i,y-2);
+    addColor(x,z,y);
   }
+  // Leave a transition band outside the last terrain tiles. Its outer edge
+  // follows the existing skyline grid and its inner edge follows the fine tile
+  // samples so the two surfaces meet without gaps or overlapping triangles.
+  const dx=width/columns, dz=depth/rows;
+  const left=Math.floor((tileBounds.min.x-extent.min.x)/dx-.5);
+  const right=Math.ceil((tileBounds.max.x-extent.min.x)/dx+.5);
+  const top=Math.floor((tileBounds.min.y-extent.min.z)/dz-.5);
+  const bottom=Math.ceil((tileBounds.max.y-extent.min.z)/dz+.5);
   const original = horizon.index!.array;
   const index: number[] = [];
-  for (let i=0; i<original.length; i+=3) {
-    const a=original[i],b=original[i+1],c=original[i+2];
-    if (!(held.has(a)&&held.has(b)&&held.has(c))) index.push(a,b,c);
+  for (let z=0; z<rows; z++) {
+    for (let x=0; x<columns; x++) {
+      if (x>=left && x<right && z>=top && z<bottom) continue;
+      const start=(z*columns+x)*6;
+      for (let i=start; i<start+6; i++) index.push(original[i]);
+    }
   }
+  const positions=Array.from(position.array);
+  const addTileEdgeVertex=(x:number,z:number)=>{
+    const i=positions.length/3, y=groundY(x,z);
+    positions.push(x,y,z);
+    addColor(x,z,y);
+    return i;
+  };
+  const {min,max}=tileBounds;
+  const corners=[
+    [min.x,min.y],[min.x,max.y],[max.x,max.y],[max.x,min.y],
+  ] as const;
+  const tileCorners=corners.map(([x,z])=>addTileEdgeVertex(x,z));
+  const outerCorners=[top*stride+left,bottom*stride+left,bottom*stride+right,top*stride+right];
+  const outerSteps=[stride,1,-stride,-1];
+  for (let side=0; side<4; side++) {
+    const next=(side+1)%4;
+    const [ax,az]=corners[side], [bx,bz]=corners[next];
+    const nearSegments=(Math.abs(bx-ax)+Math.abs(bz-az))/pineglassGroundCellSize;
+    const nearEdge=[tileCorners[side]];
+    for (let i=1; i<nearSegments; i++) {
+      nearEdge.push(addTileEdgeVertex(lerp(ax,bx,i/nearSegments),lerp(az,bz,i/nearSegments)));
+    }
+    nearEdge.push(tileCorners[next]);
+    const outerStart=outerCorners[side], outerStep=outerSteps[side];
+    const farSegments=(outerCorners[next]-outerStart)/outerStep;
+    let near=0, far=0;
+    // Advance whichever edge has the next vertex along the side.
+    while (near<nearSegments || far<farSegments) {
+      const outer=outerStart+far*outerStep;
+      if (far===farSegments || (near+1)*farSegments<(far+1)*nearSegments) {
+        index.push(nearEdge[near],outer,nearEdge[near+1]);
+        near++;
+      } else {
+        index.push(nearEdge[near],outer,outer+outerStep);
+        far++;
+      }
+    }
+  }
+  horizon.setAttribute('position',new T.Float32BufferAttribute(positions,3));
+  horizon.deleteAttribute('normal');
+  horizon.deleteAttribute('uv');
   horizon.setIndex(index);
   horizon.setAttribute('color',new T.Float32BufferAttribute(colors,3));
   horizon.computeVertexNormals();
@@ -651,8 +704,8 @@ function trackFixtures(root: T.Object3D, height: Height) {
   }};
 }
 
-export async function dressMountainLandscape(root: T.Object3D, groundY: Height, farHeight: Height, rock: T.Texture) {
-  const updateSky = skyline(root,farHeight);
+export async function dressMountainLandscape(root: T.Object3D, groundY: Height, farHeight: Height, rock: T.Texture, tileBounds: T.Box2) {
+  const updateSky = skyline(root,farHeight,groundY,tileBounds);
   const updateDetails = vergeDetails(root,groundY,rock);
   const updateCreek=creek(root,groundY);
   const gantry = trackFixtures(root,groundY);

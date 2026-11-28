@@ -1,9 +1,10 @@
-import { Box3, MathUtils } from 'three';
+import { Box2, Box3, MathUtils, Vector2 } from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import type { StageAlignment } from './stage-alignment.ts';
 
 const { lerp, smoothstep } = MathUtils;
 const tileSize = 128, cellSize = 8;
+export { cellSize as pineglassGroundCellSize };
 export const pineglassFriction = { road:.72, shoulder:.62, ground:.45 } as const;
 
 export type GroundPart = {
@@ -58,9 +59,13 @@ export function createPineglassGround(
     return (u+v-1)*gridHeight(left+cellSize,top+cellSize)+(1-u)*gridHeight(left,top+cellSize)+(1-v)*gridHeight(left+cellSize,top);
   };
   const bounds = new Box3().setFromPoints(meshStations.map(s=>s.p)).expandByScalar(660);
+  const tileBounds = new Box2(
+    new Vector2(Math.floor(bounds.min.x/tileSize)*tileSize, Math.floor(bounds.min.z/tileSize)*tileSize),
+    new Vector2(Math.ceil(bounds.max.x/tileSize)*tileSize, Math.ceil(bounds.max.z/tileSize)*tileSize),
+  );
   const cells = tileSize/cellSize;
-  for(let x0=Math.floor(bounds.min.x/tileSize)*tileSize;x0<bounds.max.x;x0+=tileSize){
-    for(let z0=Math.floor(bounds.min.z/tileSize)*tileSize;z0<bounds.max.z;z0+=tileSize){
+  for(let x0=tileBounds.min.x;x0<tileBounds.max.x;x0+=tileSize){
+    for(let z0=tileBounds.min.y;z0<tileBounds.max.y;z0+=tileSize){
       const vertices=new Float32Array((cells+1)**2*3),indices=new Uint32Array(cells*cells*6);
       const colors=new Float32Array(vertices.length).fill(1);
       let vertex=0,index=0;
@@ -124,7 +129,7 @@ export function createPineglassGround(
       addRibbon(first,last,'ground',side);
     }
   }
-  return { parts, groundY, gridHeight };
+  return { parts, groundY, gridHeight, tileBounds };
 }
 
 export function addPineglassColliders(world: RAPIER.World, parts: readonly GroundPart[]) {
