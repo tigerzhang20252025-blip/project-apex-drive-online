@@ -52,20 +52,9 @@ Admission requires a same-origin request and is limited at the edge to approxima
 
 The config is in `cloudflare.config.ts`. The local expiry binding is false in the normal build.
 
-### Commands after explicit approval
+### Production deployment
 
-Use an existing Workers Free account with an existing account workers.dev subdomain. Use an account identity already authorized to create and delete Workers, or an existing API token scoped to the chosen account with **Workers Scripts Write**. The Workers product-level **Admin** role includes creation and deletion if the account uses the newer scoped roles. There is no separate Durable Objects role for this deployment. No zone permissions are needed. If sign-in is needed, the maintainer completes it in their own terminal, and credentials stay there. [Cloudflare CLI authentication](https://developers.cloudflare.com/cf/get-started/), [Workers authorization](https://developers.cloudflare.com/workers/authorization/workers/), [Durable Objects authorization](https://developers.cloudflare.com/workers/authorization/durable-objects/)
-
-Set `CLOUDFLARE_ACCOUNT_ID` to the chosen account in that terminal. These commands use the installed, pinned cf CLI:
-
-```sh
-./node_modules/.bin/cf auth login --no-browser --scopes account:read workers:write
-./node_modules/.bin/cf workers get apex-drive-network-poc
-./node_modules/.bin/cf deploy --dry-run
-./node_modules/.bin/cf deploy
-```
-
-Use the login line only if an existing credential is unavailable. Proceed after the Worker lookup confirms the name is unused. Stop on a name collision, ambiguous lookup, a missing account subdomain or a paid-plan prompt. Use the URL printed by deployment and confirm that `/api/health` returns HTTP 200 and protocol `apex-poc.v1`. [Cloudflare deployment documentation](https://developers.cloudflare.com/cf/projects/#deploy)
+The public Worker already serves both the diagnostic at the root and the game at `/play/`. Use the paired build in the online release guide to deploy both at once. The health endpoint reports protocol `apex-poc.v1` and the current game compatibility version. [Online release and rollback](../docs/MULTIPLAYER.md#cloudflare-release)
 
 For teardown after the pilot, leave the test rooms and preview deletion before deleting the named Worker and its owned deployment and Durable Object resources. Check that the endpoint has gone and that the two namespaces no longer appear. Keep the account-level subdomain. If the API reports unexpected references, stop before forcing deletion. [Cloudflare Worker delete API](https://developers.cloudflare.com/api/resources/workers/subresources/beta/subresources/workers/methods/delete/)
 

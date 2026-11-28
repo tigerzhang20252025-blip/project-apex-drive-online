@@ -2,7 +2,15 @@
 
 An open-source 3D racing and driving simulator built with Three.js, TypeScript and Rapier. Drive a Ferrari F40 or the fictional Nissan GT-R R35 Rally Edition on Alpine Proving Ground or Pineglass Run 2.0. Both courses are available in single player and 2–6 player multiplayer.
 
+[Play Project Apex Drive Online](https://apex-drive-network-poc.tigerzhang0215.workers.dev/play/)
+
 [Multiplayer setup](docs/MULTIPLAYER.md) · [Pineglass Run 2.0](docs/PINEGLASS_RUN.md) · [Asset credits](THIRD_PARTY_NOTICES.md)
+
+## Play in your browser
+
+- **Single player.** Choose a car and course in the garage, then select **Drive**. Use **WASD** or the arrow keys to drive. Pineglass Run 2.0 records stage and sector times and offers vehicle recovery.
+- **Multiplayer.** Open **Multiplayer**, select **Create Room**, and share the invite code with up to five friends. Each friend enters the code and selects **Join Room**. Everyone chooses a car independently. The host picks the course and **Free Drive** or the timed challenge, then selects **Start Session** when everyone is ready.
+- **Room limits.** Public rooms last up to 75 minutes. The relay allows three active rooms and five reserved room-hours per rolling day. Keep the tab open to reconnect to a reserved seat within 45 seconds of a detected disconnect. Online times are client-validated, and other cars do not collide with yours. [LAN play and multiplayer limits](docs/MULTIPLAYER.md)
 
 ## Screenshots
 
@@ -84,10 +92,10 @@ Three.js renders through WebGL. TypeScript implements the game, Rapier 3D suppli
 
 ## Roadmap
 
-Proposed work includes additional vehicles and rally circuits, AI opponents, online multiplayer, weather and time of day, more detailed tire physics and browser performance improvements. These are planning items.
+Proposed work includes additional vehicles and rally circuits, AI opponents, weather and time of day, more detailed tire physics and browser performance improvements.
 
 ## Contributing and license
 
-Fork the repository and target `develop` in a pull request. Maintainers review promotion to `main`. See the [contributor guide](CONTRIBUTING.md), [release and rollback guide](docs/RELEASING.md) and [changelog](CHANGELOG.md).
+The online edition releases from its own `main` branch. The offline edition and the upstream collaboration fork have independent workflows. [Repository strategy](docs/REPOSITORY_STRATEGY.md) · [Online release and rollback](docs/MULTIPLAYER.md#cloudflare-release) · [Changelog](CHANGELOG.md)
 
-Original source is licensed under [MIT](LICENSE). MIT allows use, modification and redistribution if the copyright and license notices are retained. It provides the software as-is. Third-party assets retain the terms listed in [Third-party notices](THIRD_PARTY_NOTICES.md). Contributors are credited in Git history.
+This edition builds on Project Apex Drive by jinyuze2028-source and the original project contributors. Source code is licensed under MIT, and third-party assets retain their own license terms. [Original project](https://github.com/jinyuze2028-source/project-apex-drive) · [MIT license](LICENSE) · [Third-party notices](THIRD_PARTY_NOTICES.md)
