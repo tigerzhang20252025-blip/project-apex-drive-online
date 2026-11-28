@@ -28,6 +28,7 @@ type Callbacks = {
   exit: () => void;
   interrupted: (expired?:boolean) => void;
   unlockAudio: () => void;
+  prepareStart: () => Promise<void>;
 };
 
 type RequestError = Error & { status?: number };
@@ -73,6 +74,7 @@ export class Multiplayer {
   private selecting = false;
   private pendingVehicle?: CarId;
   private vehicleFailed = false;
+  private preparingStart = false;
   private active?: string;
   private progresses = new Map<Seat, Progress>();
   private completions:CompletionCommand[] = [];
@@ -123,10 +125,8 @@ export class Multiplayer {
       }else if (this.remote.failed && this.peers.length) {
         this.remote.retryFailed();
         this.renderLobby();
-      } else if (this.self && this.courseMatches() && this.vehicleMatches() && !this.pendingVehicle) {
-        const {id,revision}=this.callbacks.track();
-        if(!this.self.ready)this.callbacks.unlockAudio();
-        this.command({type:'ready', ready:!this.self.ready, track:id, revision});
+      } else {
+        void this.toggleReady();
       }
     });
     byId<HTMLSelectElement>('online-mode').addEventListener('change', event => {
@@ -510,9 +510,40 @@ export class Multiplayer {
     return true;
   }
 
+  private async toggleReady() {
+    const player = this.self;
+    const grant = this.grant;
+    const track = this.callbacks.track();
+    if (!player || !grant || !this.online || this.session || this.preparingStart || this.selecting ||
+        this.loadingTrack || this.pendingVehicle || !this.courseMatches() || !this.vehicleMatches()) return;
+    if (player.ready) {
+      this.command({type:'ready', ready:false, track:track.id, revision:track.revision});
+      return;
+    }
+    this.callbacks.unlockAudio();
+    this.preparingStart = true;
+    this.renderLobby();
+    let prepared = false;
+    try {
+      await this.callbacks.prepareStart();
+      prepared = true;
+    } catch {
+      if (this.grant === grant) this.notify('Could not prepare the race display. Try Ready again.');
+    } finally {
+      this.preparingStart = false;
+      this.renderLobby();
+    }
+    const latestTrack = this.callbacks.track();
+    if (!prepared || this.grant !== grant || !this.online || this.session ||
+        this.self?.vehicle !== player.vehicle || !this.vehicleMatches() || !this.remote.ready ||
+        latestTrack.id !== track.id || latestTrack.revision !== track.revision || !this.courseMatches() ||
+        !this.peers.some(peer => peer.connected)) return;
+    this.command({type:'ready', ready:true, track:track.id, revision:track.revision});
+  }
+
   private selectVehicle(id: CarId) {
     const player = this.self;
-    if (player && !player.ready && !this.selecting && !this.loadingTrack && !this.pendingVehicle &&
+    if (player && !player.ready && !this.preparingStart && !this.selecting && !this.loadingTrack && !this.pendingVehicle &&
       this.online && !this.session && id !== player.vehicle &&
       this.command({type:'profile', name:player.name, vehicle:id})) {
       this.pendingVehicle = id;
@@ -533,15 +564,18 @@ export class Multiplayer {
     return true;
   }
 
-  tick(now: number, dt: number, sample: () => VehicleSample, timing: () => Progress, observerPosition?: Vector3) {
-    const session = this.session;
-    if (!session || !this.active) return;
+  frameTime(dt: number) {
     if (this.clock && this.clockTarget !== undefined) {
       const diff = this.clockTarget - this.clock.offset;
       const maxStep = Math.min(Math.abs(diff), 25 * Math.min(Math.max(dt, 0), .1));
       this.clock.offset += Math.sign(diff) * maxStep;
     }
-    const serverNow = this.serverNow();
+    return this.serverNow();
+  }
+
+  tick(now: number, serverNow: number, poseTime: number, dt: number, sample: () => VehicleSample, timing: () => Progress, observerPosition?: Vector3) {
+    const session = this.session;
+    if (!session || !this.active) return;
     this.remote.draw(serverNow, dt, observerPosition);
     if (!this.online) return;
     const end=session.ends??Infinity;
@@ -554,7 +588,7 @@ export class Multiplayer {
       const socket = this.socket;
       if (socket?.readyState === WebSocket.OPEN && socket.bufferedAmount < 2048) {
         const {position,orientation,velocity,...visual} = sample();
-        this.send({ type:'snapshot', seq:++this.seq, t:Math.round(serverNow), rate:15, position, orientation, velocity,
+        this.send({ type:'snapshot', seq:++this.seq, t:Math.round(poseTime), rate:15, position, orientation, velocity,
           live:{...visual,session:session.id}, ...this.ackPayload() });
       }
       this.nextSend = this.nextSend < now - sendPeriod ? now + sendPeriod : this.nextSend + sendPeriod;
@@ -633,19 +667,19 @@ export class Multiplayer {
     const field = byId<HTMLSelectElement>('online-vehicle');
     const loadingVehicle = this.selecting || Boolean(this.pendingVehicle);
     field.value = this.pendingVehicle ?? this.self?.vehicle ?? this.callbacks.vehicle();
-    field.disabled = !this.online || !this.self || this.self.ready || loadingVehicle || this.loadingTrack || Boolean(this.session);
+    field.disabled = !this.online || !this.self || this.self.ready || this.preparingStart || loadingVehicle || this.loadingTrack || Boolean(this.session);
     const course=byId<HTMLSelectElement>('online-track');
     course.value=this.state?.track?.id??defaultTrack;
-    course.disabled=!this.online||!this.isHost||Boolean(this.session);
+    course.disabled=!this.online||!this.isHost||this.preparingStart||Boolean(this.session);
     const mode = byId<HTMLSelectElement>('online-mode');
     text(mode.options[1],challengeName(this.track));
     mode.value = this.mode ?? 'drive';
     mode.disabled = !this.online || !this.isHost || Boolean(this.session);
     const ready = byId<HTMLButtonElement>('online-ready');
-    text(ready,this.trackFailed?'Retry course':!this.courseMatches()?'Loading course…':
+    text(ready,this.preparingStart?'Preparing race…':this.trackFailed?'Retry course':!this.courseMatches()?'Loading course…':
       this.vehicleFailed?'Retry vehicle':loadingVehicle||!this.vehicleMatches()?'Loading vehicle…':this.remote.failed?'Retry model':
       this.self?.ready?'Unready':hasConnectedPeer&&!this.remote.ready?(peers.length>1?'Loading cars…':'Loading car…'):'Ready');
-    ready.disabled = !this.online || !this.clock || loadingVehicle || Boolean(this.session) || !hasConnectedPeer ||
+    ready.disabled = !this.online || !this.clock || this.preparingStart || loadingVehicle || Boolean(this.session) || !hasConnectedPeer ||
       !this.trackFailed && (!this.courseMatches() || this.loadingTrack ||
         !this.vehicleFailed && (!this.vehicleMatches() || (!this.remote.ready && !this.remote.failed)));
     const start = byId<HTMLButtonElement>('online-start');

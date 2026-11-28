@@ -233,6 +233,14 @@ async function start() {
   let poseReset=0;
   let submittedAttempts=0;
   let stageLaunchOnGo=false;
+  let onlineStart: {
+    starts: number;
+    firstStepAt?: number;
+    firstStepTime?: number;
+    firstRenderSubmittedAt?: number;
+    maxFrameGapMs: number;
+    maxRenderMs: number;
+  } | undefined;
   const physicsSamples:number[]=[];
   const showroom=new Showroom(scene.environment);
   function driveStep(input:DriverInput,timed=true,completedAt?:number){
@@ -405,11 +413,14 @@ async function start() {
     setText(warning, messages.join(' '));
   }
 
+  const crowdedPerformance = () => quality==='performance' && (onlineRun?.results.length ?? 0)>=4;
+
   function resize() {
     width = Math.max(1, stage.clientWidth);
     height = Math.max(1, stage.clientHeight);
     const preset = presets[quality];
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.65, preset.pixels / width, preset.height / height));
+    const ratio=Math.min(window.devicePixelRatio || 1, 1.65, preset.pixels / width, preset.height / height);
+    renderer.setPixelRatio(crowdedPerformance() ? ratio*.82 : ratio);
     renderer.setSize(width, height, false);
     camera.aspect = width / height;
     camera.updateProjectionMatrix();
@@ -1042,7 +1053,10 @@ ${car.spec.awd?car.tireTelemetry.map((w,i)=>['FL','FR','RL','RR'][i]+' '+w.surfa
       updateObserverReadout(now);
     }
     const maxOnlineGap=.9;
-    const serverNow=onlineRun?multiplayer.serverNow():0;
+    const serverNow=onlineRun?multiplayer.frameTime(dt):0;
+    if(onlineStart && onlineStart.firstRenderSubmittedAt===undefined){
+      onlineStart.maxFrameGapMs=Math.max(onlineStart.maxFrameGapMs,elapsed*1000);
+    }
     const holding={...noInput,handbrake:true};
     if(onlineRun){
       if(serverNow>=onlineRun.starts && serverNow-elapsed*1000<(onlineRun.ends??Infinity)){
@@ -1059,6 +1073,10 @@ ${car.spec.awd?car.tireTelemetry.map((w,i)=>['FL','FR','RL','RR'][i]+' '+w.surfa
         const completedAt=serverNow-accumulator*1000;
         const held=onlineRun&&(completedAt<onlineRun.starts||completedAt>(onlineRun.ends??Infinity));
         const timed=!onlineRun||(!held&&!document.hidden&&!multiplayer.timingConnectionExpired);
+        if(onlineStart && !held && onlineStart.firstStepAt===undefined){
+          onlineStart.firstStepAt=multiplayer.serverNow();
+          onlineStart.firstStepTime=completedAt;
+        }
         if(driveStep(held?holding:input,timed,completedAt)) {
           accumulator=0;
           break;
@@ -1066,16 +1084,19 @@ ${car.spec.awd?car.tireTelemetry.map((w,i)=>['FL','FR','RL','RR'][i]+' '+w.surfa
       }
     }
     if(onlineRun){
-      multiplayer.tick(now,dt,networkPose,networkTiming,car.current.position);
+      multiplayer.tick(now,serverNow,serverNow-accumulator*1000,dt,networkPose,networkTiming,car.current.position);
       dust.stepRemote(currentTrack,multiplayer.remote.dustSources,world,dt,car.current.position);
     }
     audio.update(car,camera,view==='cockpit',acceptsInput&&document.hasFocus());
     const countdown = onlineRun && serverNow < onlineRun.starts;
-    // Keep the physics and socket loop running while the stationary grid uses
-    // fewer render passes, so initial scene work has room to finish before go.
+    const crowded = crowdedPerformance();
+    // The grid is stationary. Reduce render submissions without changing the physics or relay cadence.
+    const countdownFrameMs = 1000 / (crowded ? 20 : 30);
     const drewFrame = frameCap > 0 || (observerView && !document.hidden) ||
-      (active && (!countdown || now - lastDrawAt >= 1000 / 30 - .5));
+      (active && (!countdown || now - lastDrawAt >= countdownFrameMs - .5));
     if (drewFrame) {
+      const measuringStart=onlineStart?.firstRenderSubmittedAt===undefined?onlineStart:undefined;
+      const renderStarted=measuringStart?performance.now():0;
       if (frameCap > 0) frameCap--;
       const alpha=active ? Math.min(1,accumulator/stepTime) : 1;
       marks.flush(now/1000);
@@ -1086,8 +1107,12 @@ ${car.spec.awd?car.tireTelemetry.map((w,i)=>['FL','FR','RL','RR'][i]+' '+w.surfa
       dust.flush(!observerView&&(view==='cockpit'||view==='hood'));
       if(!observerView&&view==='cockpit')visual.mirrors.update(renderer,scene,visual.group,now,currentTrack.kind==='stage');
       renderer.shadowMap.autoUpdate=(!observerView&&view==='cockpit'&&!car.spec.awd&&!onlineRun)||now>=shadowRefresh;
-      if(renderer.shadowMap.autoUpdate)shadowRefresh=now+(quality==='high'?0:1000/(car.spec.awd?20:30));
+      if(renderer.shadowMap.autoUpdate)shadowRefresh=now+(countdown?220:crowded?100:quality==='high'?0:1000/(car.spec.awd?20:30));
       renderer.render(scene, camera);
+      if(measuringStart){
+        measuringStart.maxRenderMs=Math.max(measuringStart.maxRenderMs,performance.now()-renderStarted);
+        if(serverNow>=measuringStart.starts)measuringStart.firstRenderSubmittedAt=multiplayer.serverNow();
+      }
       if (active && import.meta.env.DEV && samples.length < 3600 && Number.isFinite(lastDrawAt)) {
         samples.push(now - lastDrawAt);
       }
@@ -1384,6 +1409,55 @@ ${car.spec.awd?car.tireTelemetry.map((w,i)=>['FL','FR','RL','RR'][i]+' '+w.surfa
     clock=performance.now();setView('chase');setPaused(false);snapView=true;
     updateGarage();
   }
+  async function prepareOnlineStart(){
+    const currentRuntime=runtime, localVisual=visual, slot=multiplayer.slot;
+    await renderer.compileAsync(scene,camera);
+    await renderer.compileAsync(localVisual.group,camera,scene);
+    if(!inGarage||runtime!==currentRuntime||visual!==localVisual||!slot)return;
+    const spawn=currentTrack.grid[slot-1];
+    const gridCamera=camera.clone();
+    gridCamera.position.set(0,2.1,9).applyQuaternion(spawn.rotation).add(spawn.position);
+    gridCamera.lookAt(spawn.position.clone().add(new T.Vector3(0,.65,0)));
+    const groups=[...scene.children.filter(node=>node.userData.remoteSlot),localVisual.group];
+    const originals=groups.map(group=>({
+      group, parent:group.parent, position:group.position.clone(), rotation:group.quaternion.clone(), visible:group.visible,
+    }));
+    const scissor=renderer.getScissor(new T.Vector4());
+    const scissorTest=renderer.getScissorTest();
+    const shadows=renderer.shadowMap.autoUpdate;
+    const skyPosition=skydome.position.clone();
+    try {
+      for(const group of groups){
+        const grid=currentTrack.grid[(Number(group.userData.remoteSlot)||slot)-1];
+        if(group.parent!==scene)scene.add(group);
+        group.position.copy(grid.position).y+=.34;
+        group.quaternion.copy(grid.rotation);
+        group.visible=true;
+      }
+      skydome.position.copy(gridCamera.position);
+      // Submit visible grid geometry once before Ready. The scissor keeps the showroom on screen.
+      renderer.setScissor(0,0,1,1);
+      renderer.setScissorTest(true);
+      renderer.shadowMap.autoUpdate=true;
+      renderer.render(scene,gridCamera);
+    } finally {
+      renderer.setScissor(scissor);
+      renderer.setScissorTest(scissorTest);
+      renderer.shadowMap.autoUpdate=shadows;
+      skydome.position.copy(skyPosition);
+      for(const {group,parent,position,rotation,visible} of originals){
+        if(group.parent!==parent){
+          if(parent)parent.add(group);
+          else group.removeFromParent();
+        }
+        group.position.copy(position);
+        group.quaternion.copy(rotation);
+        group.visible=visible;
+      }
+      frameCap=Math.max(1,frameCap);
+    }
+  }
+
   async function switchVehicle(id:VehicleId){
     if(!inGarage||switching||id===currentVehicle)return;
     switching=true;garageError.hidden=true;updateGarage();
@@ -1534,6 +1608,9 @@ ${car.spec.awd?car.tireTelemetry.map((w,i)=>['FL','FR','RL','RR'][i]+' '+w.surfa
     enter:(session,slot)=>{
       endObservation();
       onlineRun=session;
+      resize();
+      shadowRefresh=0;
+      onlineStart=diagnostic?{starts:session.starts,maxFrameGapMs:0,maxRenderMs:0}:undefined;
       gridSlot=slot;
       submittedAttempts=0;
       poseReset=0;
@@ -1551,6 +1628,9 @@ ${car.spec.awd?car.tireTelemetry.map((w,i)=>['FL','FR','RL','RR'][i]+' '+w.surfa
     },
     exit:()=>{
       onlineRun=null;stageLaunchOnGo=false;
+      resize();
+      shadowRefresh=0;
+      onlineStart=undefined;
       gantry.signal.reset();
       enterGarage();
       laps=loadRecords(currentTrack,currentVehicle);
@@ -1567,12 +1647,14 @@ ${car.spec.awd?car.tireTelemetry.map((w,i)=>['FL','FR','RL','RR'][i]+' '+w.surfa
       if(expired)laps.invalidate('Connection interrupted');
     },
     unlockAudio:()=>audio.unlock(),
+    prepareStart:prepareOnlineStart,
   });
   if (diagnostic) {
     Object.assign(window, { apexDiagnostics: {
       inspect:{get laps(){return laps;},marks,wear,get audio(){return audio;},get gantry(){return gantry;},
         get visual(){return visual;},get car(){return car;},get world(){return world;},RAPIER,renderer,camera,scene,T,updateVegetation,sun,skydome,showroom},
       multiplayer:()=>multiplayer.diagnostics,
+      onlineStart:()=>onlineStart,
       timeLapPath(speed:number,cutTrack=false){
         if(!onlineRun||multiplayer.prestart||multiplayer.finished)throw new Error('A session must be running.');
         laps.cancel();

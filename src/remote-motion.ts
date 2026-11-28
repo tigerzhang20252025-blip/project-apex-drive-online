@@ -29,6 +29,7 @@ export class RemoteMotion {
   private sendPeriodMs = defaultSendPeriodMs;
   private currentDelayMs = minDelayMs;
   private playoutTime?: number;
+  private lastStepAt?: number;
   private hasRendered = false;
   private rawPos = new T.Vector3();
   private rawVel = new T.Vector3();
@@ -126,15 +127,20 @@ export class RemoteMotion {
     this.currentDelayMs += (desiredDelayMs - this.currentDelayMs) * (1 - Math.exp(-delayRate * stepDt));
     const desiredPlayout = serverNow - this.currentDelayMs;
 
-    if (this.playoutTime === undefined || !this.hasRendered) {
+    if (this.playoutTime === undefined || !this.hasRendered || this.lastStepAt === undefined) {
       this.playoutTime = T.MathUtils.clamp(desiredPlayout, this.frames[0].time, last.time);
+      this.lastStepAt = serverNow;
     } else {
-      const drift = desiredPlayout - this.playoutTime;
-      if (Math.abs(drift) > 350) {
+      // Rendering dt is capped for smoothing. Network playout still follows elapsed server time.
+      const elapsedMs = Math.max(0, serverNow - this.lastStepAt);
+      this.lastStepAt = Math.max(this.lastStepAt, serverNow);
+      const projected = this.playoutTime + elapsedMs;
+      const drift = desiredPlayout - projected;
+      if (drift > 350) {
         this.playoutTime = desiredPlayout;
       } else {
         const rate = T.MathUtils.clamp(1 + drift * .0025, .90, 1.10);
-        this.playoutTime += stepDt * 1000 * rate;
+        this.playoutTime += elapsedMs * rate;
       }
     }
 
@@ -182,7 +188,7 @@ export class RemoteMotion {
       extrapSec = rawExtrap * (1 - .3 * fraction);
       this.tmpB.copy(b.velocity).multiplyScalar(extrapSec).clampLength(0, 8);
       this.rawPos.add(this.tmpB);
-      this.rawVel.copy(b.velocity).multiplyScalar(1 - .6 * fraction);
+      this.rawVel.copy(b.velocity).multiplyScalar(fraction < 1 ? 1 - .6 * fraction : 0);
     }
 
     if (!this.hasRendered) {
@@ -227,6 +233,7 @@ export class RemoteMotion {
     this.frames.length = 0;
     this.previous = undefined;
     this.playoutTime = undefined;
+    this.lastStepAt = undefined;
     this.hasRendered = false;
     this.posOffset.set(0, 0, 0);
     this.rotOffset.identity();

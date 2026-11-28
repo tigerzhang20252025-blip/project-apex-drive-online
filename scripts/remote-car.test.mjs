@@ -123,3 +123,48 @@ test('RemoteMotion snaps immediately on genuine car reset without smearing acros
   assert.equal(motion.step(1750, 1 / 60), true);
   assert.ok(Math.abs(motion.position.z) < .05, `expected snap to grid z=0, got ${motion.position.z}`);
 });
+
+test('RemoteMotion catches up after a render stall without rewinding when the clock moves back', () => {
+  const motion = new RemoteMotion();
+  const speed = 30;
+  const origin = 1000;
+  let seq = 0;
+  const send = now => {
+    while (origin + (seq + 1) * 66 + 35 <= now) {
+      const at = origin + ++seq * 66;
+      motion.receive(makePacket(seq, at, 35, [0, .35, -speed * (at - origin) / 1000], [0, 0, -speed]), at + 35);
+    }
+  };
+  for (let now = 1300; now <= 2000; now += 16) {
+    send(now);
+    assert.ok(motion.step(now, .016));
+  }
+  send(2240);
+  assert.ok(motion.step(2240, .075));
+  for (let now = 2256; now <= 2480; now += 16) {
+    send(now);
+    motion.step(now, .016);
+  }
+  const expected = -speed * (2480 - motion.delayMs - origin) / 1000;
+  assert.ok(Math.abs(motion.position.z - expected) < .55, `displayed=${motion.position.z}, expected=${expected}`);
+  const beforeCorrection = motion.position.z;
+  motion.step(2120, .016);
+  assert.ok(motion.position.z <= beforeCorrection + .06, 'backward clock correction rewound the peer car');
+});
+
+test('RemoteMotion stops extrapolating motion and dust once the packet gap exceeds its prediction window', () => {
+  const motion = new RemoteMotion();
+  for (let seq = 1; seq <= 5; seq++) {
+    const t = 1000 + seq * 67;
+    const packet = makePacket(seq, t, 20, [0, .35, -seq * 2], [0, 0, -30]);
+    packet.live.dust = [20, 16, 0, 0];
+    motion.receive(packet, t + 20);
+  }
+  for (let now = 1450; now <= 1850; now += 16)motion.step(now, .016);
+  assert.ok(motion.visible);
+  assert.equal(motion.velocity.length(), 0);
+  assert.equal(motion.dust, undefined);
+  const position = motion.position.clone();
+  motion.step(1900, .05);
+  assert.ok(motion.position.distanceTo(position) < .1);
+});

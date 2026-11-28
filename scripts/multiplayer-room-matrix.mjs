@@ -216,7 +216,22 @@ async function startRoom(pages, track, mode = 'drive') {
   assert.ok(leadMs > 1000, 'A client received the countdown too late: ' + leadMs + ' ms');
   const skewMs = Math.round(Math.max(...starts.map(s => s.detected)) - Math.min(...starts.map(s => s.detected)));
   await waitPeers(pages, pages.length - 1);
-  return { id: starts[0].id, leadMs, skewMs, firstFrameLateMs: starts.map(s => Math.round(s.detected - s.starts)) };
+  const startWork = await Promise.all(pages.map(async page => {
+    await until(page, () => apexDiagnostics.onlineStart()?.firstRenderSubmittedAt !== undefined
+      && apexDiagnostics.onlineStart()?.firstStepAt !== undefined);
+    return page.evaluate(() => {
+      const { starts, firstStepAt, firstStepTime, firstRenderSubmittedAt, maxFrameGapMs, maxRenderMs } = apexDiagnostics.onlineStart();
+      return {
+        stepLateMs: Math.round(firstStepAt - starts),
+        stepTimeMs: Math.round(firstStepTime - starts),
+        renderSubmittedLateMs: Math.round(firstRenderSubmittedAt - starts),
+        maxFrameGapMs: Math.round(maxFrameGapMs),
+        maxRenderMs: Math.round(maxRenderMs),
+      };
+    });
+  }));
+  assert.ok(startWork.every(client => client.stepTimeMs >= 0), 'Simulation began accepting inputs before GO');
+  return { id: starts[0].id, leadMs, skewMs, firstFrameLateMs: starts.map(s => Math.round(s.detected - s.starts)), startWork };
 }
 
 async function waitPeers(pages, count) {
@@ -421,7 +436,7 @@ async function scoreChallenge(pages, output) {
   assert.ok(results[1].bestLap.every(Number.isFinite) && results[2].bestLap.every(Number.isFinite));
   assert.ok(results.filter(row => ![2, 3].includes(row.slot)).every(row => row.best === null));
   await host.screenshot({ path: join(output, '6-players-challenge.jpg'), quality: 90 });
-  return { skewMs: session.skewMs, timedSeats: [2, 3], invalidSeat: 4, results };
+  return { skewMs: session.skewMs, startWork: session.startWork, timedSeats: [2, 3], invalidSeat: 4, results };
 }
 
 async function soak(pages, scenario, cdp, seconds) {
@@ -499,6 +514,7 @@ try {
       scenario.skewMs = session.skewMs;
       scenario.countdownLeadMs = session.leadMs;
       scenario.firstFrameLateMs = session.firstFrameLateMs;
+      scenario.startWork = session.startWork;
       const before = await beginMeasurement(pages, cdp);
       scenario.movement = await move(pages);
       assert.equal(scenario.movement.renderedMovingLinks, size * (size - 1));
