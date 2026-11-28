@@ -57,16 +57,16 @@ Never submit the entire independent development or `main` branch as an upstream 
 - Never commit deployment credentials, private tokens, or production secrets.
 - Note: [CONTRIBUTING.md](../CONTRIBUTING.md) and [docs/RELEASING.md](RELEASING.md) originate from upstream and document the original repository's `develop`-based PR and Netlify release workflow. Treat them as upstream reference rather than constraints on independent `online` or `offline` releases.
 
-## 6. Multi-Agent Coordination (Antigravity & Codex)
+## 6. Development Continuity and Preserving Existing Work
 
-Both Antigravity and Codex may work across these repositories. Before starting any task:
+Antigravity is the sole active coding agent across these repositories. Before starting any task:
 
 1. Confirm the active repository and working directory.
 2. Inspect `git status -sb`, `git branch -a`, `git worktree list`, and recent commits (`git log -n 10 --oneline --decorate`).
 3. Check for existing uncommitted changes across active worktrees.
-4. Review relevant changes implemented by another agent; reuse suitable implementations and preserve completed work while applying independent engineering judgment.
-5. Do not overwrite, revert, or duplicate another agent's work without investigating it first.
-6. Use isolated branches or temporary worktrees when concurrent development makes separation necessary.
+4. Review and reuse suitable existing implementations and preserve completed work while applying independent engineering judgment.
+5. Do not overwrite, revert, or duplicate existing work without investigating it first.
+6. Use isolated branches or temporary worktrees only when separate isolation is needed (for example, testing or preparing an upstream `contrib/*` branch).
 
 ## 7. Git Safety Rules
 

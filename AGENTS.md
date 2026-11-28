@@ -38,10 +38,11 @@ See [docs/REPOSITORY_STRATEGY.md](docs/REPOSITORY_STRATEGY.md) for full details 
 - Selectively integrate upstream improvements into own repositories only after reviewing compatibility.
 - Public online game URL: `https://apex-drive-network-poc.tigerzhang0215.workers.dev/play/`. Keep deployment infrastructure independent of the original project's Cloudflare/Netlify setup and keep reusable gameplay separate from owner-specific deployment settings where practical.
 
-## Multi-Agent Coordination (Antigravity & Codex)
+## Development Continuity and Preserving Existing Work
 
-- Before starting any task: confirm the local repository and working directory, inspect `git branch`, `git status`, `git worktree list`, and recent commits, check for uncommitted work, and review relevant changes made by another agent.
-- Reuse suitable existing work and preserve completed/uncommitted changes while exercising independent engineering judgment. Never overwrite, revert, or duplicate another agent's work without investigating first. Use isolated branches or temporary worktrees when concurrent work requires separation.
+- Antigravity is the sole active coding agent for Project Apex Drive.
+- Before starting any task: confirm the local repository and working directory, inspect `git branch`, `git status`, `git worktree list`, and recent commits, and check for existing or uncommitted work.
+- Reuse suitable existing implementations and preserve completed or uncommitted work while exercising independent engineering judgment. Do not overwrite, revert, or duplicate existing work without investigating it first. Use isolated branches or temporary worktrees only when separate isolation is needed.
 
 ## Git Safety Rules
 
