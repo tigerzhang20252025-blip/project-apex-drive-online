@@ -10,6 +10,12 @@ This document records the long-term Git repository architecture, remote layout, 
 | `project-apex-drive-offline` | `https://github.com/tigerzhang20252025-blip/project-apex-drive-offline` | Independent offline distribution repository. Must remain playable without internet. Preserves local assets, runtime dependencies, launch tools, and offline-specific packaging. Receives selective gameplay syncs from `online`. Publish distributable bundles via GitHub Releases rather than committing unnecessary large binaries to Git history. |
 | `project-apex-drive-collab` | `https://github.com/tigerzhang20252025-blip/project-apex-drive-collab` | Existing GitHub fork of `https://github.com/jinyuze2028-source/project-apex-drive` dedicated to upstream collaboration and selective contributions. Do not detach this fork or create unnecessary extra repositories. |
 
+## Open the development workspace
+
+Open `project-apex-drive-online` directly in Antigravity for online work. Open `project-apex-drive-offline` separately for offline work. Each checkout has its own Git history, installed dependencies, and local vehicles. Use `feat/online-multiplayer` in the online checkout for the current development baseline. The online `main` branch tracks the stable release history.
+
+The collaboration fork remains on GitHub. When an upstream contribution is explicitly authorized, create the contribution branch in the online checkout from `upstream/develop` and use its `collab` remote for that branch. The historical collaboration checkout is retained for recovery.
+
 ## 2. Git Remote Configuration
 
 Always inspect `git remote -v` and verify the working directory before running Git commands.
