@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.1
+
+- Added a clickable F40 AUTO/MAN cockpit rocker that follows the same transmission mode as the keyboard, HUD and Settings.
+- Updated the R35 engine button to require the brake for cockpit startup. The HUD and ignition shortcut still start the engine directly.
+- Fixed Pineglass Run 2.0 mountain flicker near the 1.65 km crest by joining the distant ridge mesh to the local terrain boundary.
+
 ## 0.2.0
 
 - Official public multiplayer release with two to six drivers, private room codes, independent vehicle selection, reconnect and host migration. LAN rooms remain available.
