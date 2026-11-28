@@ -27,8 +27,8 @@ test('Pineglass 2.0 shares its multiplayer identity and spawns behind ordered st
   assert.ok(track.gates.every((gate,index)=>index===0||gate.distance>track.gates[index-1].distance));
   assert.deepEqual(track.sectors.map(i=>track.gates[i].distance),[2367,5016]);
   const timing=new StageTiming(track);
-  function playStage(){
-    timing.launch();
+  function playStage(elapsedSinceStart=0){
+    timing.launch(elapsedSinceStart);
     for(let station=-5;station<route.finish+1;station+=.5){
       const s=track.sampleAt(station);
       s.p.y+=.36;
@@ -45,9 +45,13 @@ test('Pineglass 2.0 shares its multiplayer identity and spawns behind ordered st
   playStage();
   assert.equal(timing.count,2);
   assert.ok(Math.abs(timing.best-best)<1e-8);
+  timing.cancel();
+  playStage(1.25);
+  assert.ok(Math.abs(timing.last-best-1.25)<1e-8);
+  assert.ok(Math.abs(timing.lastLapSectors[0]-timing.bestLapSectors[0]-1.25)<1e-8);
   const restored=new StageTiming(track);
   restored.restore(JSON.parse(JSON.stringify(timing.records())));
-  assert.equal(restored.count,2);
+  assert.equal(restored.count,3);
   assert.deepEqual(restored.bestSectors,timing.bestSectors);
   assert.equal(restored.status,'waiting');
 });

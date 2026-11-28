@@ -1,14 +1,26 @@
 import type { TrackId, TrackIdentity } from './tracks.ts';
 import type { Pose } from './protocol.ts';
 
-export const gameVersion = 'apex-drive-courses-2';
+export const gameVersion = 'apex-drive-courses-3';
 export const countdownMs = 5_000;
 export const challengeMs = 600_000;
 export const finishGraceMs = 1_500;
+export const maxPlayers = 6;
+export const seats = [1, 2, 3, 4, 5, 6] as const;
 
 export type CarId = 'f40' | 'r35';
 export type SessionMode = 'drive' | 'challenge';
-export type Seat = 1 | 2;
+export type Seat = typeof seats[number];
+export const seatColors: Record<Seat, string> = {
+  1: '#5fd4f4',
+  2: '#73d7e9',
+  3: '#9be564',
+  4: '#ffd166',
+  5: '#c792ea',
+  6: '#ff7eb6',
+};
+export const isSeat = (value: unknown): value is Seat =>
+  typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= maxPlayers;
 export type Splits = [number, number, number];
 export type PartialSplits = [number | null, number | null, number | null];
 export type DriverProfile = { name: string; vehicle: CarId; ready: boolean };

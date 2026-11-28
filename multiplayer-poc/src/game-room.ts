@@ -31,9 +31,13 @@ export function restoreGameCourse(game: GameState, members: GameMember[]) {
   return true;
 }
 
-export function losePlayer(game: GameState, members: GameMember[], now: number) {
-  if (!members.some(member => member.slot === game.host) && members[0]) game.host = members[0].slot;
-  if (game.session && now < game.session.starts && members.filter(member => member.generation).length < 2) {
+export function updateRoomMembership(game: GameState, members: GameMember[], now: number) {
+  const connected = members.filter(member => member.generation !== null);
+  if (!connected.some(member => member.slot === game.host)) {
+    const next = connected[0] ?? members.find(member => member.slot === game.host) ?? members[0];
+    if (next) game.host = next.slot;
+  }
+  if (game.session && now < game.session.starts && connected.length < 2) {
     game.session = null;
     for (const member of members) member.driver.ready = false;
   }
@@ -47,7 +51,7 @@ export function updateGame(game: GameState, members: GameMember[], sender: GameM
   const track = trackIdentities[game.track??defaultTrack];
   const host = sender.slot === game.host;
   const locked = { error: 'Return to the lobby to change session settings.' };
-  if (['profile','mode','track','ready','start','lobby'].includes(String(msg.type)) && (game.lobbyChanges ?? 0) >= 120) {
+  if (['profile','mode','track','ready','start','lobby'].includes(String(msg.type)) && (game.lobbyChanges ?? 0) >= 300) {
     return { error: 'This room has reached its session limit. Create another room.' };
   }
   switch (msg.type) {
@@ -85,10 +89,10 @@ export function updateGame(game: GameState, members: GameMember[], sender: GameM
     case 'start': {
       if (!host) return { error: 'Only the host can start the session.' };
       if (session) return { error: 'A session is already open.' };
-      if (members.length !== 2 || members.some(member => !member.generation || !member.driver.ready)) {
-        return { error: 'Both drivers must be connected and ready.' };
+      if (members.length < 2 || members.some(member => !member.generation || !member.driver.ready)) {
+        return { error: 'At least two drivers must be connected, and all drivers must be ready.' };
       }
-      const starts = now + (gameTest ? 2_000 : countdownMs);
+      const starts = now + countdownMs;
       const ends = game.mode === 'challenge' ? starts + (gameTest ? 38_000 : challengeMs) : null;
       if ((ends ?? starts) + finishGraceMs >= roomEnds) return { error: 'This room expires soon. Create a new room.' };
       game.lastFinish = {};

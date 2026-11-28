@@ -4,7 +4,7 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import { maxDustRate, type DustRates } from '../shared/game.ts';
 import { surfaceFor, type SurfaceName } from './rally-dynamics.ts';
 import type { DustSurface } from './pineglass-dust-profile.ts';
-import type { RemoteCar } from './remote-car.ts';
+import type { RemoteDustSource } from './remote-car.ts';
 import type { TrackDefinition } from './tracks.ts';
 import type { DriverInput, Vehicle } from './vehicle.ts';
 
@@ -130,7 +130,7 @@ export class GravelDust {
   private readonly mesh=new T.Mesh(this.geometry,this.material);
   private readonly expires=new Float32Array(capacity);
   private readonly credits=[0,.33,.68,.17];
-  private readonly remoteCredits=[0,0,0,0];
+  private readonly remoteCredits=new Map<number,[number,number,number,number]>();
   readonly rates:DustRates=[0,0,0,0];
   private readonly rayOrigin=new T.Vector3();
   private readonly ray=new RAPIER.Ray(this.rayOrigin,{x:0,y:-1,z:0});
@@ -185,7 +185,7 @@ export class GravelDust {
   clear(){
     this.clock=this.latestExpiry=this.next=this.used=this.dirty=0;
     this.resetLocal();
-    this.remoteCredits.fill(0);
+    this.remoteCredits.clear();
     this.remoteEmitted=0;
     this.randomState=964249;
     this.mesh.visible=false;
@@ -277,41 +277,62 @@ export class GravelDust {
     }
   }
 
-  stepRemote(track:TrackDefinition, source:RemoteCar['dustSource'], world:RAPIER.World, dt:number){
+  stepRemote(track:TrackDefinition, sources:ReadonlyArray<RemoteDustSource>, world:RAPIER.World, dt:number, observerPosition?:T.Vector3){
     const profile=track.dust;
-    const rates=source?.motion.dust;
-    if(!this.enabled||!profile||!source||!rates){
-      this.remoteCredits.fill(0);
+    if(!this.enabled||!profile||!sources.length){
+      this.remoteCredits.clear();
       return;
     }
-    const {motion,spec}=source;
-    const {position,rotation,velocity,suspension}=motion;
-    const airspeed=smoothstep(velocity.length(),20,44);
-    for(const [i,wheel] of spec.wheels.entries()){
-      const rate=rates[i];
-      if(!rate){
-        this.remoteCredits[i]=0;
-        continue;
+    const maxDistSq=this.options.range*this.options.range;
+    const activeSources=observerPosition
+      ? sources.filter(s=>s.motion.position.distanceToSquared(observerPosition)<=maxDistSq)
+      : sources;
+    const seen=new Set<number>();
+    const crowdScale=activeSources.length>1?1/activeSources.length:1;
+    let raysRemaining=8;
+    for(const source of activeSources){
+      const rates=source.motion.dust;
+      if(!rates)continue;
+      seen.add(source.slot);
+      let credits=this.remoteCredits.get(source.slot);
+      if(!credits){
+        credits=[0,0,0,0];
+        this.remoteCredits.set(source.slot,credits);
       }
-      this.remoteCredits[i]+=this.options.rate*rate*dt;
-      if(this.remoteCredits[i]<1)continue;
-      const count=Math.floor(this.remoteCredits[i]);
-      this.remoteCredits[i]-=count;
-      this.rayOrigin.set(wheel.x,spec.mountHeight-suspension[i]-spec.radius,wheel.z)
-        .applyQuaternion(rotation).add(position).y+=.48;
-      const hit=world.castRayAndGetNormal(this.ray,.9,true,RAPIER.QueryFilterFlags.ONLY_FIXED);
-      if(!hit||hit.normal.y<.42||hit.collider.friction()<.40)continue;
-      this.origin.copy(this.rayOrigin).y-=hit.timeOfImpact;
-      profile(track.project(this.origin.x,this.origin.z).station,this.tireSurface);
-      if(this.tireSurface.density<.01)continue;
-      this.normal.copy(hit.normal);
-      this.axle.set(1,0,0).applyQuaternion(rotation);
-      this.axle.addScaledVector(this.normal,-this.axle.dot(this.normal)).normalize();
-      this.contactVelocity.copy(velocity);
-      const slip=smoothstep(Math.abs(velocity.dot(this.axle)),1,9);
-      const strength=clamp(.25+rate/maxDustRate+.25*slip,0,1);
-      for(let j=0;j<count;j++)this.emit(velocity,i%2?1:-1,strength,slip,airspeed,this.tireSurface);
-      this.remoteEmitted+=count;
+      const {motion,spec}=source;
+      const {position,rotation,velocity,suspension}=motion;
+      const airspeed=smoothstep(velocity.length(),20,44);
+      for(const [i,wheel] of spec.wheels.entries()){
+        const rate=rates[i];
+        if(!rate){
+          credits[i]=0;
+          continue;
+        }
+        credits[i]+=this.options.rate*crowdScale*rate*dt;
+        if(credits[i]<1)continue;
+        if(raysRemaining<=0){credits[i]=Math.min(credits[i],1);continue;}
+        raysRemaining--;
+        const count=Math.min(2,Math.floor(credits[i]));
+        credits[i]-=count;
+        this.rayOrigin.set(wheel.x,spec.mountHeight-suspension[i]-spec.radius,wheel.z)
+          .applyQuaternion(rotation).add(position).y+=.48;
+        const hit=world.castRayAndGetNormal(this.ray,.9,true,RAPIER.QueryFilterFlags.ONLY_FIXED);
+        if(!hit||hit.normal.y<.42||hit.collider.friction()<.40)continue;
+        this.origin.copy(this.rayOrigin).y-=hit.timeOfImpact;
+        profile(track.project(this.origin.x,this.origin.z).station,this.tireSurface);
+        if(this.tireSurface.density<.01)continue;
+        this.normal.copy(hit.normal);
+        this.axle.set(1,0,0).applyQuaternion(rotation);
+        this.axle.addScaledVector(this.normal,-this.axle.dot(this.normal)).normalize();
+        this.contactVelocity.copy(velocity);
+        const slip=smoothstep(Math.abs(velocity.dot(this.axle)),1,9);
+        const strength=clamp(.25+rate/maxDustRate+.25*slip,0,1);
+        for(let j=0;j<count;j++)this.emit(velocity,i%2?1:-1,strength,slip,airspeed,this.tireSurface);
+        this.remoteEmitted+=count;
+      }
+    }
+    for(const slot of this.remoteCredits.keys()){
+      if(!seen.has(slot))this.remoteCredits.delete(slot);
     }
   }
 

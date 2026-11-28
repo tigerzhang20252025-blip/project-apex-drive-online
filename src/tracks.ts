@@ -1,4 +1,5 @@
 import { Vector3 } from 'three';
+import { maxPlayers } from '../shared/game.ts';
 import {
   defaultTrack, trackIdentities, type TrackId,
 } from '../shared/tracks.ts';
@@ -42,7 +43,7 @@ export type TrackDefinition = (Extract<RegisteredTrack, {kind: 'circuit'}> | Sta
   description: string;
   timingLayout: string;
   dust?: DustProfile;
-  grid: readonly [TrackSpawn, TrackSpawn];
+  grid: readonly TrackSpawn[];
   gates: readonly TimingGate[];
   sectors: readonly [number, number];
   minimap: readonly Station[];
@@ -53,13 +54,37 @@ export type TrackDefinition = (Extract<RegisteredTrack, {kind: 'circuit'}> | Sta
 };
 
 const alpineAt = (distance: number) => ({ ...sampleAt(distance), halfWidth: roadHalfWidth });
-function gravelGrid(sampleAt:TrackDefinition['sampleAt']):readonly [TrackSpawn,TrackSpawn]{
-  const start=sampleAt(-5), yaw=Math.atan2(-start.forward.x,-start.forward.z);
-  const rotation={x:0,y:Math.sin(yaw/2),z:0,w:Math.cos(yaw/2)};
-  const spawn=(lateral:number):TrackSpawn=>({
-    position:start.p.clone().addScaledVector(start.right,lateral),rotation,surface:compactedGravel,
-  });
-  return [spawn(1.85),spawn(-1.85)];
+function buildGrid(
+  sampler: (distance: number) => { p: Vector3; right: Vector3; forward: Vector3 },
+  frontDistance: number,
+  rowSpacing: number,
+  surface?: TrackSurface,
+): readonly TrackSpawn[] {
+  const spawns: TrackSpawn[] = [];
+  for (let slot = 0; slot < maxPlayers; slot++) {
+    const row = Math.floor(slot / 2);
+    const lateral = slot % 2 === 0 ? 1.85 : -1.85;
+    const station = sampler(frontDistance - row * rowSpacing);
+    const yaw = Math.atan2(-station.forward.x, -station.forward.z);
+    const rotation = { x: 0, y: Math.sin(yaw / 2), z: 0, w: Math.cos(yaw / 2) };
+    spawns.push({
+      position: station.p.clone().addScaledVector(station.right, lateral),
+      rotation,
+      ...(surface ? { surface } : {}),
+    });
+  }
+  return spawns;
+}
+function alpineGrid(): readonly TrackSpawn[] {
+  const rest = buildGrid(sampleAt, lineDistance - 58, 8).slice(2);
+  return [
+    { position: grid, rotation: gridRotation },
+    { position: oppositeGrid, rotation: gridRotation },
+    ...rest,
+  ];
+}
+function gravelGrid(sampleAt: TrackDefinition['sampleAt']): readonly TrackSpawn[] {
+  return buildGrid(sampleAt, -5, 8, compactedGravel);
 }
 
 export const tracks: Record<TrackId, TrackDefinition> = {
@@ -68,10 +93,7 @@ export const tracks: Record<TrackId, TrackDefinition> = {
     length: courseLength, startDistance: lineDistance, finishDistance: lineDistance+courseLength,
     width: [11.2, 11.2], elevation: [1.55, 92.16], surfaceName: 'Asphalt', cornerCount: 14,
     description: 'Fast asphalt, steep climbs and linked corners across an Alpine ridge.',
-    timingLayout: SECTOR_LAYOUT_ID, grid: [
-      { position: grid, rotation: gridRotation },
-      { position: oppositeGrid, rotation: gridRotation },
-    ],
+    timingLayout: SECTOR_LAYOUT_ID, grid: alpineGrid(),
     gates: [startLine,...checkpointGates].map(g=>({...g, halfWidth:roadHalfWidth})),
     sectors: sectorBoundaryIndices, minimap: stations, sampleAt: alpineAt,
     project: (x,z)=>{

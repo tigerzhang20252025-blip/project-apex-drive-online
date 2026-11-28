@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { restoreGameCourse, updateGame, viewGame } from '../src/game-room.ts';
-import { maxFrameSize, poseFrom } from '../../shared/protocol.ts';
-import { finishGraceMs, livePoseFrom } from '../../shared/game.ts';
+import { restoreGameCourse, updateGame, updateRoomMembership, viewGame } from '../src/game-room.ts';
+import { acksFrom, maxFrameSize, poseFrom } from '../../shared/protocol.ts';
+import { finishGraceMs, livePoseFrom, maxPlayers, seats } from '../../shared/game.ts';
 import { defaultTrack, trackIdentities } from '../../shared/tracks.ts';
 
 test('Only finishes for the selected Alpine revision score in a room',()=>{
@@ -16,7 +16,7 @@ test('Only finishes for the selected Alpine revision score in a room',()=>{
   assert.deepEqual(track,trackIdentities[defaultTrack]);
   assert.ok(members.every(m=>!m.driver.ready));
   assert.match(change(2,{type:'ready',ready:true,track:track.id,revision:'old'}).error,/course changed/);
-  assert.match(change(1,{type:'start'}).error,/Both drivers/);
+  assert.match(change(1,{type:'start'}).error,/At least two drivers/);
   for(const slot of [1,2])assert.ok(change(slot,{type:'ready',ready:true,track:track.id,revision:track.revision}).persist);
   assert.ok(change(1,{type:'start'}).persist);
   assert.equal(game.session.track.revision,track.revision);
@@ -109,4 +109,59 @@ test('A pre-deadline finish can arrive in the room grace window only',()=>{
   assert.ok(send({},ends+finishGraceMs-100).persist);
   assert.equal(result.best,32_000);
   assert.deepEqual(send({},ends+finishGraceMs),{});
+});
+
+test('A room supports up to six drivers, multi-slot acks, and multi-player challenge scoring',()=>{
+  assert.equal(maxPlayers,6);
+  const members=seats.map(slot=>({
+    slot,generation:'conn-'+slot,driver:{name:'Driver '+slot,vehicle:slot%2?'f40':'r35',ready:false},
+  }));
+  const game={host:1,mode:'challenge',session:null};
+  const change=(slot,msg,now=100_000)=>updateGame(game,members,members[slot-1],msg,now,999_000,false);
+  const track=viewGame(game,members).track;
+  for(const slot of seats.slice(0,5))assert.ok(change(slot,{type:'ready',ready:true,track:track.id,revision:track.revision}).persist);
+  assert.match(change(1,{type:'start'}).error,/At least two drivers/);
+  assert.ok(change(6,{type:'ready',ready:true,track:track.id,revision:track.revision}).persist);
+  assert.ok(change(1,{type:'start'}).persist);
+  assert.equal(game.session.results.length,6);
+  // If one of six disconnects during countdown, five remain so session stays live.
+  members[5].generation=null;
+  updateRoomMembership(game,members,101_000);
+  assert.ok(game.session);
+  // Multi-player snapshot with 5 peer acks fits comfortably inside half of maxFrameSize.
+  const acks={2:1045,3:1044,4:1043,5:1042,6:1041};
+  assert.deepEqual(acksFrom(acks),acks);
+  assert.equal(acksFrom({7:1}),undefined);
+  assert.equal(acksFrom({2:0}),undefined);
+  const snap={type:'snapshot',seq:1050,t:1795800000987,rate:15,
+    position:[3821.999,469.996,-1425.256],orientation:[-.3135,.5475,-.4361,.6459],
+    velocity:[-17.31,-7.32,-51.29],
+    live:{session:game.session.id,reset:3,steering:[-.13,.14],wheels:[19564.89,-17533.22,19436.56,19999.99],
+      suspension:[.21,.31,.17,.23],flags:63,progress:.9999,dust:[80,80,80,80]},acks};
+  const bytes=new TextEncoder().encode(JSON.stringify(snap)).length;
+  assert.ok(bytes<maxFrameSize/2,'6-player snapshot used '+bytes+' bytes');
+  // Score multiple drivers in the same session.
+  for(const [slot,splits] of [[1,[35_000,32_000,31_000]],[3,[33_000,31_000,30_000]],[5,[36_000,34_000,33_000]]]){
+    assert.ok(change(slot,{type:'lap',session:game.session.id,revision:track.revision,number:1,completedAt:230_000,splits},230_000).persist);
+  }
+  const bestBySlot=Object.fromEntries(game.session.results.map(r=>[r.slot,r.best]));
+  assert.equal(bestBySlot[1],98_000);
+  assert.equal(bestBySlot[3],94_000);
+  assert.equal(bestBySlot[5],103_000);
+});
+
+test('Host transfer skips reconnecting seats and preserves a running session', () => {
+  const members = [1, 2, 3, 4].map(slot => ({
+    slot, generation: 'seat-' + slot, driver: { name: 'Driver ' + slot, vehicle: 'f40', ready: true },
+  }));
+  const session = { starts: 105_000 };
+  const game = { host: 1, mode: 'drive', session };
+  members[0].generation = members[1].generation = null;
+  updateRoomMembership(game, members, 110_000);
+  assert.equal(game.host, 3);
+  assert.equal(game.session, session);
+  members[0].generation = 'resumed-host';
+  updateRoomMembership(game, members, 111_000);
+  assert.equal(game.host, 3);
+  assert.equal(game.session, session);
 });

@@ -1,4 +1,4 @@
-import type { GameNotice, LivePose } from './game.ts';
+import { isSeat, maxPlayers, type GameNotice, type LivePose } from './game.ts';
 
 export const protocol = 'apex-poc.v1';
 export const rates = [10, 15, 20] as const;
@@ -11,6 +11,7 @@ export const maxFrameSize = 1024;
 export type Vector = [number, number, number];
 export type Quaternion = [number, number, number, number];
 export type Ack = { generation: string; seq: number };
+export type SlotAcks = Record<number, number>;
 export type Pose = {
   seq: number;
   t: number;
@@ -47,6 +48,19 @@ export function ackFrom(value: unknown): Ack | undefined {
   if (typeof generation === 'string' && tokenPattern.test(generation) && isSequence(seq)) {
     return { generation, seq };
   }
+}
+
+export function acksFrom(value: unknown): SlotAcks | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return;
+  const entries = Object.entries(value as Record<string, unknown>);
+  if (!entries.length || entries.length > maxPlayers) return;
+  const result: SlotAcks = {};
+  for (const [key, seq] of entries) {
+    const slot = Number(key);
+    if (!isSeat(slot) || String(slot) !== key || !isSequence(seq)) return;
+    result[slot] = seq;
+  }
+  return result;
 }
 
 function finiteTuple(value: unknown, count: number, bound: number): value is number[] {

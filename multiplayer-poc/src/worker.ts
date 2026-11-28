@@ -103,8 +103,13 @@ export default {
       const shortTest = env.LOCAL_EXPIRY_TEST === 'true' && url.hostname === '127.0.0.1';
       const lease = await directory.reserve(id.toString(), shortTest ? 12_000 : roomLifetimeMs);
       if (!lease) return reply({ error: 'Pilot room limit reached. Try again later.' }, 429);
-      const grant = await rooms.get(id).initialize(lease.code, lease.end, profile, local && env.LOCAL_GAME_TEST === 'true', isTrackId(body.track) ? body.track : defaultTrack);
-      return reply(grant, 201);
+      try {
+        const grant = await rooms.get(id).initialize(lease.code, lease.end, profile, local && env.LOCAL_GAME_TEST === 'true', isTrackId(body.track) ? body.track : defaultTrack);
+        return reply(grant, 201);
+      } catch (error) {
+        await directory.release(id.toString());
+        throw error;
+      }
     } catch {
       return reply({ error: 'Relay temporarily unavailable.' }, 503);
     }

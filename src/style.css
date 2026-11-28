@@ -233,9 +233,11 @@ dialog::backdrop{background:#07090dc9}
 .online-code b{font-size:19px;letter-spacing:.08em;font-variant-numeric:tabular-nums}
 .online-selects{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 .online-selects select{display:block;margin-top:4px}
-#online-drivers{padding:0;margin:12px 0 14px;list-style:none;display:grid;gap:5px}
-#online-drivers li{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;padding:7px 9px;border:1px solid var(--line);border-radius:5px;background:#182028}
+#online-drivers{padding:0;margin:10px 0 12px;list-style:none;display:grid;gap:4px;max-height:208px;overflow:auto}
+#online-drivers li{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;padding:5px 9px;border:1px solid var(--line);border-radius:5px;background:#182028}
+#online-drivers li.online-capacity{display:block;color:var(--muted);font-size:11px;background:transparent;border-style:dashed;padding:4px 9px}
 #online-drivers li b,#online-drivers li small{display:block;overflow-wrap:anywhere}
+#online-drivers .seat-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;vertical-align:middle}
 #online-drivers small{color:var(--muted)}
 #online-drivers strong{font-size:11px;color:#ffbd99;padding-left:8px}
 #online-drivers [data-ready=true] strong{color:var(--good)}

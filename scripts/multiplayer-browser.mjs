@@ -211,6 +211,9 @@ try {
   await a.locator('#play-online').click();
 
   const b = await visit('Alpine Driver');
+  let host = a;
+  const guest = () => host === a ? b : a;
+  const startSession = () => start(host, guest());
   await a.locator('#online-create').click();
   await a.locator('#online-room').waitFor();
   await b.locator('#online-code-input').fill(await a.locator('#online-code').textContent());
@@ -254,7 +257,7 @@ try {
   for (const [first,second] of [['f40','f40'],['f40','r35'],['r35','f40'],['r35','r35']]) {
     await selectCar(a,first);
     await selectCar(b,second);
-    const skewMs = await start(a,b);
+    const skewMs = await startSession();
     await Promise.all([waitRemote(a,second),waitRemote(b,first)]);
     assert.equal((await network(a)).session.track.id,course);
     assert.equal((await network(a)).session.track.revision,(await network(b)).session.track.revision);
@@ -409,24 +412,27 @@ try {
       await a.waitForFunction(()=>window.apexDiagnostics.multiplayer().online,null,{timeout:18_000});
       await waitRemote(b,first);
       assert.equal((await network(a)).slot,1);
+      await b.locator('#online-end').waitFor({timeout:12_000});
+      assert.ok(await a.locator('#online-end').isHidden());
+      host = b;
       summary.coverage.offlineTestMs=Date.now()-offline;
     }
     summary.combos.push({first,second,skewMs,remoteA:(await network(a)).remote,remoteB:(await network(b)).remote});
     console.log('Free Drive',first,second,'start skew',skewMs,'ms');
-    await a.locator('#online-end').click();
+    await host.locator('#online-end').click();
     await Promise.all([a,b].map(page=>page.locator('#online-room').waitFor({timeout:12_000})));
   }
 
-  await a.locator('#online-mode').selectOption('challenge');
-  await b.waitForFunction(()=>document.querySelector('#online-mode').value==='challenge');
-  assert.equal(await b.locator('#online-mode option[value=challenge]').textContent(),stageCourse?'Best Stage Challenge':'Best Lap Challenge');
+  await host.locator('#online-mode').selectOption('challenge');
+  await guest().waitForFunction(()=>document.querySelector('#online-mode').value==='challenge');
+  assert.equal(await guest().locator('#online-mode option[value=challenge]').textContent(),stageCourse?'Best Stage Challenge':'Best Lap Challenge');
   if(stageCourse){
-    await start(a,b);
-    await a.locator('#online-end').click();
+    await startSession();
+    await host.locator('#online-end').click();
     await Promise.all([a,b].map(page=>page.locator('#online-room').waitFor()));
     summary.coverage.earlyChallengeEnd=true;
   }
-  const skewMs=await start(a,b);
+  const skewMs=await startSession();
   const invalid=await a.evaluate(()=>window.apexDiagnostics.timeLapPath(185,true));
   assert.equal(invalid.count,0);
   let lapA,lapB;

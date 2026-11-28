@@ -2,7 +2,9 @@ import { DurableObject } from 'cloudflare:workers';
 
 const alphabet = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
 const dayMs = 24 * 60 * 60 * 1000;
-const roomBudgetMs = 9 * 60 * 60 * 1000;
+// Five hours at six drivers sending poses, timing and pings is about
+// 89,100 Durable Object request equivalents before admission traffic.
+const roomBudgetMs = 5 * 60 * 60 * 1000;
 const maxRooms = 3;
 const maxCreations = 120;
 export const roomLifetimeMs = 75 * 60 * 1000;

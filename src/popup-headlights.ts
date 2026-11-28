@@ -47,6 +47,7 @@ export class PopupHeadlights{
       holder.rotation.x=-.69;
       pivot.add(holder);
       const bulb=new T.MeshStandardMaterial({map:lensMap,emissiveMap:lensMap,color:0xc7cbbe,metalness:.22,roughness:.28,emissive:0xffe0a6});
+      bulb.userData.remoteLight='popupBulb';
       for(const prefix of ['PopupCover','PopupTrim','PopupLens','PopupInsert']){
         const part=body.getObjectByName(prefix+suffix);
         if(!(part instanceof T.Mesh))throw new Error('Missing F40 headlamp mesh '+prefix+suffix);

@@ -2,7 +2,7 @@ import * as T from 'three';
 import type { DustRates, LivePose } from '../shared/game.ts';
 import type { Relay } from '../shared/protocol.ts';
 
-const sendPeriodMs = 1000 / 15;
+const defaultSendPeriodMs = 1000 / 15;
 const minDelayMs = 150;
 const maxDelayMs = 450;
 const extrapolateMs = 160;
@@ -26,6 +26,7 @@ export class RemoteMotion {
   private source?: Relay;
   private transitMs = 50;
   private jitterMs = 10;
+  private sendPeriodMs = defaultSendPeriodMs;
   private currentDelayMs = minDelayMs;
   private playoutTime?: number;
   private hasRendered = false;
@@ -73,6 +74,7 @@ export class RemoteMotion {
     const sampleTime = Math.max((this.previous?.time ?? -Infinity) + 1, time);
     const arrivalNow = receiverServerNow ?? packet.receivedAt;
     const observedTransit = T.MathUtils.clamp(arrivalNow - sampleTime, 0, 400);
+    if (packet.rate > 0) this.sendPeriodMs = 1000 / packet.rate;
 
     if (this.previous) {
       const sendDelta = sampleTime - this.previous.time;
@@ -83,7 +85,7 @@ export class RemoteMotion {
     } else {
       this.transitMs = observedTransit;
       const seeded = T.MathUtils.clamp(
-        this.transitMs + sendPeriodMs * 2.1 + this.jitterMs * 2.5,
+        this.transitMs + this.sendPeriodMs * 2.1 + this.jitterMs * 2.5,
         minDelayMs,
         maxDelayMs,
       );
@@ -116,7 +118,7 @@ export class RemoteMotion {
     }
 
     const desiredDelayMs = T.MathUtils.clamp(
-      this.transitMs + sendPeriodMs * 2.1 + this.jitterMs * 2.5,
+      this.transitMs + this.sendPeriodMs * 2.1 + this.jitterMs * 2.5,
       minDelayMs,
       maxDelayMs,
     );

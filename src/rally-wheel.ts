@@ -305,25 +305,30 @@ function assemble(parent:T.Group,layers:Layer[]){
   }
 }
 
-export function rallyWheelSet(radius:number){
+export function rallyWheelSet(radius:number, exteriorOnly=false){
   const rubber=new T.MeshStandardMaterial({...treadMap(),roughness:.86,metalness:0,bumpScale:.00125});
   const sidewall=new T.MeshStandardMaterial({...sidewallMaps(),roughness:.83,metalness:0,bumpScale:.00195});
   const distantRubber=new T.MeshStandardMaterial({map:rubber.map,roughness:.86,metalness:0});
   const distantSidewall=new T.MeshStandardMaterial({map:sidewall.map,roughness:.83,metalness:0});
   const alloys=wheelAlloys();
-  const low=createRubber(radius,false),high=createRubber(radius,true);
-  const silhouette=section([[-.115,radius-.016],[-.080,radius-.0007],[.080,radius-.0007],[.115,radius-.016]],32);
-  const shadowOnly=new T.MeshStandardMaterial({colorWrite:false,depthWrite:false});
+  const low=createRubber(radius,false),high=exteriorOnly?null:createRubber(radius,true);
+  const silhouette=exteriorOnly?null:section([[-.115,radius-.016],[-.080,radius-.0007],[.080,radius-.0007],[.115,radius-.016]],32);
+  const shadowOnly=exteriorOnly?null:new T.MeshStandardMaterial({colorWrite:false,depthWrite:false});
   return (pivot:T.Group,roller:T.Group,side:number,front:boolean)=>{
-    const detail=new T.LOD();detail.name='R35 tyre distance LOD';roller.add(detail);
-    for(const [level,range] of [[high,0],[low,2.85]] as const){
-      const group=new T.Group();
-      part(group,level.shoulder,range?distantSidewall:sidewall).castShadow=false;
-      part(group,level.contact,range?distantRubber:rubber).castShadow=false;
-      detail.addLevel(group,range,.10);
+    if(exteriorOnly){
+      part(roller,low.shoulder,distantSidewall).castShadow=false;
+      part(roller,low.contact,distantRubber).castShadow=false;
+    }else{
+      const detail=new T.LOD();detail.name='R35 tyre distance LOD';roller.add(detail);
+      for(const [level,range] of [[high!,0],[low,2.85]] as const){
+        const group=new T.Group();
+        part(group,level.shoulder,range?distantSidewall:sidewall).castShadow=false;
+        part(group,level.contact,range?distantRubber:rubber).castShadow=false;
+        detail.addLevel(group,range,.10);
+      }
+      const shadow=part(roller,silhouette!,shadowOnly!);
+      shadow.name='R35 tyre shadow proxy';shadow.layers.set(3);shadow.userData.shadowOnly=true;
     }
-    const shadow=part(roller,silhouette,shadowOnly);
-    shadow.name='R35 tyre shadow proxy';shadow.layers.set(3);shadow.userData.shadowOnly=true;
     const {spin,fixed}=alloyLayers(side,front,alloys);
     assemble(roller,spin);
     const caliper=new T.Group();caliper.name='R35 fixed brake caliper';pivot.add(caliper);assemble(caliper,fixed);

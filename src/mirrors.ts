@@ -22,28 +22,32 @@ export class Mirrors{
     }
     geometry.setAttribute('uv',new T.Float32BufferAttribute(uv,2));mesh.material=this.surface;mesh.castShadow=false;
   }
-  private configure(body:T.Group, compact:boolean){
+  private warmedTrack?: string;
+  private configure(position:T.Vector3,quaternion:T.Quaternion,compact:boolean){
     const far=compact?500:970;
     if(this.camera.far!==far){this.camera.far=far;this.camera.updateProjectionMatrix();}
-    this.camera.position.set(0,.65,2.27).applyQuaternion(body.quaternion).add(body.position);
-    this.camera.quaternion.copy(body.quaternion).multiply(this.rear);
+    this.camera.position.set(0,.65,2.27).applyQuaternion(quaternion).add(position);
+    this.camera.quaternion.copy(quaternion).multiply(this.rear);
   }
 
-  warm(renderer:T.WebGLRenderer,scene:T.Scene,body:T.Group){
-    this.configure(body,true);
-    const current=renderer.getRenderTarget();
+  warm(renderer:T.WebGLRenderer,scene:T.Scene,body:T.Group,trackKey?:string,position:T.Vector3=body.position,quaternion:T.Quaternion=body.quaternion){
+    if(trackKey&&this.warmedTrack===trackKey)return;
+    this.warmedTrack=trackKey;
+    this.configure(position,quaternion,true);
+    const current=renderer.getRenderTarget(),shadows=renderer.shadowMap.autoUpdate,visible=body.visible;
+    body.visible=false;renderer.shadowMap.autoUpdate=false;renderer.setRenderTarget(this.target);
     try {
-      renderer.setRenderTarget(this.target);
-      void renderer.compileAsync(scene,this.camera);
+      renderer.render(scene,this.camera);
     } finally {
       renderer.setRenderTarget(current);
+      body.visible=visible;renderer.shadowMap.autoUpdate=shadows;
     }
   }
 
   update(renderer:T.WebGLRenderer,scene:T.Scene,body:T.Group,now:number,compact=false){
     if(now<this.nextRefresh)return;
     this.nextRefresh=now+140;
-    this.configure(body,compact);
+    this.configure(body.position,body.quaternion,compact);
     const current=renderer.getRenderTarget(),shadows=renderer.shadowMap.autoUpdate,visible=body.visible;
     body.visible=false;renderer.shadowMap.autoUpdate=false;renderer.setRenderTarget(this.target);
     try {

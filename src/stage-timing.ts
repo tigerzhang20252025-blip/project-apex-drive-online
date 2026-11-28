@@ -39,9 +39,9 @@ export class StageTiming extends AttemptTiming {
     this.initialized=false;
   }
 
-  launch() {
+  launch(elapsedSinceStart = 0) {
     if (this.status !== 'waiting') return;
-    this.beginAttempt(this.elapsed);
+    this.beginAttempt(this.elapsed-elapsedSinceStart);
     this.nextGate=0;
     this.peak=-Infinity;
     this.outside=this.outsideDistance=this.inside=0;

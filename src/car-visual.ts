@@ -1,6 +1,7 @@
 import {PopupHeadlights} from './popup-headlights.ts';
 import {fitRearBadge} from './f40-badge.ts';
 import {buildWiper} from './wiper.ts';
+import {batchSubtree} from './batch.ts';
 import * as T from 'three';
 import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
 import {RoundedBoxGeometry} from 'three/addons/geometries/RoundedBoxGeometry.js';
@@ -58,15 +59,16 @@ export class CarVisual {
         if(wheel[1]==='disc'){m.color.set('#898782');m.roughness=.49;m.metalness=.79;}
       }else if(m.name==='material'){mesh.material=red;}
       else if(m.name.startsWith('F40_Window')||m.name.startsWith('F40_Glass')||m.name==='F40_Headlights'){mesh.material=glass;mesh.renderOrder=2;}
-      else if(mesh.name.startsWith('signal')){m=m.clone();mesh.material=m;m.color.set('#bf5620');m.emissive.set('#ff8d16');ribbedLens(m,.749);this.signals[mesh.name==='signalL'?0:1]=m;}
-      else if(m.name==='super_brakelight'){this.brake=m;m.color.set('#a82012');m.emissive.set('#fd220c');m.roughness=.28;ribbedLens(m,.576);}
-      else if(m.name==='super_headlight'){this.head=m;m.emissive.set('#fff0cb');}
-      else if(m.name==='super_reverselight'){this.reverse=m;m.emissive.set('#fff5df');}
+      else if(mesh.name.startsWith('signal')){m=m.clone();mesh.material=m;m.color.set('#bf5620');m.emissive.set('#ff8d16');ribbedLens(m,.749);m.userData.remoteLight=mesh.name==='signalL'?'signalL':'signalR';this.signals[mesh.name==='signalL'?0:1]=m;}
+      else if(m.name==='super_brakelight'){this.brake=m;m.color.set('#a82012');m.emissive.set('#fd220c');m.roughness=.28;ribbedLens(m,.576);m.userData.remoteLight='brake';}
+      else if(m.name==='super_headlight'){this.head=m;m.emissive.set('#fff0cb');m.userData.remoteLight='head';}
+      else if(m.name==='super_reverselight'){this.reverse=m;m.emissive.set('#fff5df');m.userData.remoteLight='reverse';}
       else if(m.name==='F40_Cockpit'){m.color.set('#3d3c3a');m.metalness=0;m.roughness=.88;upholstery(mesh,m,'dash');}
       else if(m.name==='F40_Cockpit_HR'){m.color.set('#8a302b');m.metalness=0;m.roughness=.96;upholstery(mesh,m,'textile');}
       else if(m.name==='F40_Skin'){m.color.set('#912e29');m.roughness=.94;upholstery(mesh,m);}
       else if(m.name==='F40_Carbon'){m.color.set('#313234');m.roughness=.64;upholstery(mesh,m,'composite');}
       else if(m.name.startsWith('F40_Chrome')){m.metalness=.85;m.roughness=.28;}
+      if(exteriorOnly&&mesh.name==='part1')mesh.userData.mirrorSkip=true;
       mesh.castShadow=mesh.material!==glass;mesh.receiveShadow=true;
     }
     if(this.wheels.some(w=>w.roller.children.length<3)||!this.brake||!this.head)throw Error('Incomplete F40 vehicle asset');
@@ -77,6 +79,10 @@ export class CarVisual {
       await this.driver.load(this.steering.parent!);
     }
     this.popups=new PopupHeadlights(body,!exteriorOnly);
+    if(exteriorOnly){
+      batchSubtree(body,node=>node.name.startsWith('Popup hinge')||node.name.startsWith('mirror'));
+      for(const {roller} of this.wheels)batchSubtree(roller);
+    }
   }
   syncExteriorLights(flags:number,dt:number){
     this.popups.requested=Boolean(flags&lightFlags.auxiliary);

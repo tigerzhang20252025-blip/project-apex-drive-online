@@ -8,6 +8,7 @@ import {Mirrors} from './mirrors.ts';
 import {asset} from './environment.ts';
 import {upholstery} from './finishes.ts';
 import {bevel,part,rallyMat} from './rally-details.ts';
+import {batchSubtree} from './batch.ts';
 import {buildRallyTrim,buildRearOptics,carbonUV,finishNose,fitFuelDoor,fitRearBadges,paintBody,rallySurfaces} from './rally-surfaces.ts';
 import {rallyWheelSet} from './rally-wheel.ts';
 import {buildRallyCabin} from './rally-cabin.ts';
@@ -164,6 +165,7 @@ export class RallyVisual implements VehicleVisual {
       }
       if(/r35_exhaust_LW/.test(tag))node.visible=false;
       if(/^r35_gauges_.*display_segment_|^r35_speedunit_/.test(tag))node.visible=false;
+      if(exteriorOnly&&mat.name.startsWith('Meo_turbo_'))node.visible=false;
     });
     for(const door of doors){
       const bounds=new T.Box3().setFromObject(door,true),side=Math.sign(bounds.getCenter(new T.Vector3()).x);
@@ -191,20 +193,31 @@ export class RallyVisual implements VehicleVisual {
     const factoryGuides=this.trim.getObjectByName('R35 headlamp guides')!;
     this.group.add(factoryGuides);
     this.head.add(nose.LED);
+    for(const mat of this.head)mat.userData.remoteLight='head';
+    for(const mat of this.tail)mat.userData.remoteLight='tail';
+    for(const mat of this.brake)mat.userData.remoteLight='brake';
+    nose.core.userData.remoteLight='auxCore';
     fitRearBadges(this.group,rearPanels);
     fitFuelDoor(this.group,paintedPanels);
     if(!exteriorOnly)this.cabin=buildRallyCabin(this.trim,body,this.hitTargets);
     batchRallyShell(body,this.group);
     const hubNames=['HubFL','HubFR','HubRL','HubRR'];
-    const buildWheel=rallyWheelSet(this.spec.radius);
+    const buildWheel=rallyWheelSet(this.spec.radius,exteriorOnly);
     this.spec.wheels.forEach((wheel,i)=>{
       const pivot=new T.Group(),roller=new T.Group();pivot.name=hubNames[i];pivot.position.set(wheel.x,0,wheel.z);
       this.group.add(pivot);pivot.add(roller);this.wheels.push({pivot,roller});
       buildWheel(pivot,roller,Math.sign(wheel.x),i<2);
+      if(exteriorOnly){
+        batchSubtree(roller);
+        batchSubtree(pivot,node=>node===roller);
+      }
       pivot.traverse(object=>{if(!object.userData.shadowOnly)object.layers.set(1);});
     });
     const lamps=buildRallyTrim(this.trim,carbon);
     this.popups=new AuxiliaryLamps(nose.core);this.signals=lamps.signals;
+    if(this.signals[0])this.signals[0].userData.remoteLight='signalL';
+    if(this.signals[1])this.signals[1].userData.remoteLight='signalR';
+    if(exteriorOnly)batchSubtree(this.trim);
     if(!exteriorOnly){
       this.steering=this.cabin.steering;
       await this.driver.load(this.cabin.column);

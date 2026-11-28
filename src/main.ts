@@ -1,5 +1,6 @@
 import {Multiplayer} from './multiplayer.ts';
-import {lightFlags, type Progress, type Seat, type Session, type VehicleSample} from '../shared/game.ts';
+import {lightFlags, seatColors, type Progress, type Seat, type Session, type VehicleSample} from '../shared/game.ts';
+import type {RemoteMarker} from './remote-car.ts';
 import {challengeName,defaultTrack,isTrackId,trackIdentities,type TrackId} from '../shared/tracks.ts';
 import {ChaseCamera,type ChasePreset} from './chase-camera.ts';
 import {ObserverCamera,inspectObserverRoad} from './observer-camera.ts';
@@ -119,28 +120,32 @@ function makeMinimap(track:TrackDefinition) {
   const {mapX,mapY}=drawCourse(base,track,true);
   minimap.setAttribute('aria-label',track.name+' · '+(track.length/1000).toFixed(3)+' km');
   const cameraCtx = minimap.getContext('2d')!;
-  return (x: number, z: number, direction: T.Vector3, opponent?:T.Vector3) => {
+  return (x: number, z: number, direction: T.Vector3, opponents?:ReadonlyArray<RemoteMarker>) => {
     cameraCtx.clearRect(0, 0, width, height);
     cameraCtx.drawImage(base, 0, 0);
+    const selfX=mapX(x),selfY=mapY(z);
+    if(opponents){
+      for(const opponent of opponents){
+        const color=seatColors[opponent.slot]??'#73d7e9';
+        const px=mapX(opponent.position.x),py=mapY(opponent.position.z);
+        const near=Math.hypot(px-selfX,py-selfY)<9;
+        cameraCtx.beginPath();
+        cameraCtx.arc(px,py,near?6:3.6,0,Math.PI*2);
+        if(near){cameraCtx.strokeStyle=color;cameraCtx.lineWidth=1.5;cameraCtx.stroke();}
+        else{
+          cameraCtx.fillStyle=color;cameraCtx.fill();
+          cameraCtx.strokeStyle='#17212a';cameraCtx.lineWidth=1.2;cameraCtx.stroke();
+        }
+      }
+    }
     cameraCtx.save();
-    cameraCtx.translate(mapX(x), mapY(z));
+    cameraCtx.translate(selfX, selfY);
     cameraCtx.rotate(Math.atan2(direction.x, -direction.z));
     cameraCtx.beginPath();
     cameraCtx.moveTo(0, -8); cameraCtx.lineTo(5.4, 5.5); cameraCtx.lineTo(0, 3.1); cameraCtx.lineTo(-5.4, 5.5);
     cameraCtx.closePath();
     cameraCtx.fillStyle = '#ff8a52'; cameraCtx.fill();
     cameraCtx.restore();
-    if(opponent){
-      const px=mapX(opponent.x),py=mapY(opponent.z);
-      const near=Math.hypot(px-mapX(x),py-mapY(z))<9;
-      cameraCtx.beginPath();
-      cameraCtx.arc(px,py,near?6:3.6,0,Math.PI*2);
-      if(near){cameraCtx.strokeStyle='#73d7e9';cameraCtx.lineWidth=1.5;cameraCtx.stroke();}
-      else{
-        cameraCtx.fillStyle='#73d7e9';cameraCtx.fill();
-        cameraCtx.strokeStyle='#17212a';cameraCtx.lineWidth=1.2;cameraCtx.stroke();
-      }
-    }
   };
 }
 
@@ -232,7 +237,11 @@ async function start() {
   const showroom=new Showroom(scene.environment);
   function driveStep(input:DriverInput,timed=true,completedAt?:number){
     if(timed&&laps instanceof StageTiming&&(stageLaunchOnGo||(car.running&&input.throttle>0))){
-      laps.launch();stageLaunchOnGo=false;
+      // Anchor the first step to the shared GO even if the first render is late.
+      const elapsedSinceStart=stageLaunchOnGo&&onlineRun&&completedAt!==undefined
+        ? Math.max(0,(completedAt-onlineRun.starts)/1000-stepTime)
+        : 0;
+      laps.launch(elapsedSinceStart);stageLaunchOnGo=false;
     }
     const physicsStart=diagnostic?performance.now():0;
     car.update(input);
@@ -308,6 +317,7 @@ async function start() {
   let sinceUI = 1;
   const chaseCamera=new ChaseCamera();
   let drawFrames = 0;
+  let lastDrawAt = -Infinity;
   let shadowRefresh=0;
   const lightDir=new T.Vector3(.339,.672,.659).normalize(); // brightest region of alps.hdr, in the panorama frame
   const lightX=new T.Vector3(0,1,0).cross(lightDir).normalize(),lightY=lightDir.clone().cross(lightX).normalize();
@@ -484,7 +494,7 @@ async function start() {
   dialLighting.addEventListener('input',()=>{setDialLight();try{localStorage.setItem('apex.dial-lighting',dialLighting.value);}catch{}});
 
   function reset(restart = false) {
-    const spawn=currentTrack.grid[onlineRun&&gridSlot===2?1:0];
+    const spawn=currentTrack.grid[onlineRun?Math.min(gridSlot-1,currentTrack.grid.length-1):0];
     car.reset(restart,spawn.position,spawn.rotation);
     if(onlineRun)poseReset++;
     laps.cancel();
@@ -513,7 +523,7 @@ async function start() {
     if (!recovery || !(laps instanceof StageTiming)) return false;
     const station=recovery.recover(laps.passedGates);
     if (station===null) {
-      const spawn=currentTrack.grid[onlineRun&&gridSlot===2?1:0];
+      const spawn=currentTrack.grid[onlineRun?Math.min(gridSlot-1,currentTrack.grid.length-1):0];
       car.reset(false,spawn.position,spawn.rotation);
     } else {
       const {p,forward}=currentTrack.sampleAt(station);
@@ -922,7 +932,7 @@ ${car.spec.awd?car.tireTelemetry.map((w,i)=>['FL','FR','RL','RR'][i]+' '+w.surfa
     const signal = car.blink ? (car.turn === -1 ? '◀' : car.turn === 1 ? '▶' : car.turn === 2 ? '◀ ▶' : '') : '';
     setText(labels.signal, [car.lights ? 'LAMPS' : '', signal, car.wiper.mode==='OFF'?'':'WIPER '+car.wiper.mode].filter(Boolean).join(' · '));
     labels.tach.style.transform = `scaleX(${Math.min(1, car.rpm / car.spec.redline)})`;
-    map(car.current.position.x, car.current.position.z, car.direction, multiplayer.remote.visiblePosition);
+    map(car.current.position.x, car.current.position.z, car.direction, multiplayer.remote.visibleMarkers);
     multiplayer.renderTrack();
   }
 
@@ -1056,11 +1066,16 @@ ${car.spec.awd?car.tireTelemetry.map((w,i)=>['FL','FR','RL','RR'][i]+' '+w.surfa
       }
     }
     if(onlineRun){
-      multiplayer.tick(now,dt,networkPose,networkTiming);
-      dust.stepRemote(currentTrack,multiplayer.remote.dustSource,world,dt);
+      multiplayer.tick(now,dt,networkPose,networkTiming,car.current.position);
+      dust.stepRemote(currentTrack,multiplayer.remote.dustSources,world,dt,car.current.position);
     }
     audio.update(car,camera,view==='cockpit',acceptsInput&&document.hasFocus());
-    if (active || (observerView && !document.hidden) || frameCap > 0) {
+    const countdown = onlineRun && serverNow < onlineRun.starts;
+    // Keep the physics and socket loop running while the stationary grid uses
+    // fewer render passes, so initial scene work has room to finish before go.
+    const drewFrame = frameCap > 0 || (observerView && !document.hidden) ||
+      (active && (!countdown || now - lastDrawAt >= 1000 / 30 - .5));
+    if (drewFrame) {
       if (frameCap > 0) frameCap--;
       const alpha=active ? Math.min(1,accumulator/stepTime) : 1;
       marks.flush(now/1000);
@@ -1070,9 +1085,13 @@ ${car.spec.awd?car.tireTelemetry.map((w,i)=>['FL','FR','RL','RR'][i]+' '+w.surfa
       cameraPose(dt);
       dust.flush(!observerView&&(view==='cockpit'||view==='hood'));
       if(!observerView&&view==='cockpit')visual.mirrors.update(renderer,scene,visual.group,now,currentTrack.kind==='stage');
-      renderer.shadowMap.autoUpdate=(!observerView&&view==='cockpit'&&!car.spec.awd)||now>=shadowRefresh;
+      renderer.shadowMap.autoUpdate=(!observerView&&view==='cockpit'&&!car.spec.awd&&!onlineRun)||now>=shadowRefresh;
       if(renderer.shadowMap.autoUpdate)shadowRefresh=now+(quality==='high'?0:1000/(car.spec.awd?20:30));
       renderer.render(scene, camera);
+      if (active && import.meta.env.DEV && samples.length < 3600 && Number.isFinite(lastDrawAt)) {
+        samples.push(now - lastDrawAt);
+      }
+      lastDrawAt = now;
       drawFrames++;help.update();
     }
     sinceUI += dt;
@@ -1080,8 +1099,7 @@ ${car.spec.awd?car.tireTelemetry.map((w,i)=>['FL','FR','RL','RR'][i]+' '+w.surfa
 
     if (active && elapsed > 0) {
       fpsWindow += elapsed;
-      frames++;
-      if (import.meta.env.DEV && samples.length < 3600) samples.push(elapsed * 1000);
+      if (drewFrame) frames++;
       if (fpsWindow >= 1) {
         setText(labels.fps, `${Math.round(frames / fpsWindow)} FPS`);
         frames = 0; fpsWindow = 0;
@@ -1357,11 +1375,11 @@ ${car.spec.awd?car.tireTelemetry.map((w,i)=>['FL','FR','RL','RR'][i]+' '+w.surfa
     if(!inGarage||switching)return;
     inGarage=false;selecting=false;garageError.hidden=true;
     if(car.running||car.ignition==='START')car.setIgnition();
-    scene.add(visual.group);marks.disconnect();laps.cancel();
+    scene.add(visual.group);visual.sync(car,1);marks.disconnect();laps.cancel();
     if(currentTrack.kind==='stage'){
       updateVegetation(car.current.position);
       dust.warm(renderer,scene,camera);
-      visual.mirrors.warm(renderer,scene,visual.group);
+      visual.mirrors.warm(renderer,scene,visual.group,currentTrack.id);
     }
     clock=performance.now();setView('chase');setPaused(false);snapView=true;
     updateGarage();
@@ -1393,6 +1411,10 @@ ${car.spec.awd?car.tireTelemetry.map((w,i)=>['FL','FR','RL','RR'][i]+' '+w.surfa
     settle();marks.clear();dust.clear();
     try{localStorage.setItem('apex.vehicle',id);}catch{}
     showroom.reset();showroom.scene.add(visual.group);
+    if(currentTrack.kind==='stage'){
+      updateVegetation(car.current.position);
+      visual.mirrors.warm(renderer,scene,visual.group,currentTrack.id,car.current.position,car.current.rotation);
+    }
     switching=false;updateGarage();setDialLight();syncControlPanel();frameCap=10;
   }
   async function switchTrack(id:TrackId):Promise<boolean>{
@@ -1437,6 +1459,11 @@ ${car.spec.awd?car.tireTelemetry.map((w,i)=>['FL','FR','RL','RR'][i]+' '+w.surfa
     historyShown='';byId('lap-history').replaceChildren();
     map=makeMinimap(currentTrack);
     updateTrackLabels();
+    if(currentTrack.kind==='stage'){
+      updateVegetation(car.current.position);
+      dust.warm(renderer,scene,camera);
+      visual.mirrors.warm(renderer,scene,visual.group,currentTrack.id,car.current.position,car.current.rotation);
+    }
     switching=false;pending.hidden=true;
     updateGarage();frameCap=8;sinceUI=1;
     return true;

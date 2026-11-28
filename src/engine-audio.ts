@@ -47,7 +47,8 @@ export class EngineAudio {
       const data=noise.getChannelData(0);
       let seed=3791;
       for(let i=0;i<data.length;i++){seed=(Math.imul(seed,1664525)+1013904223)>>>0;data[i]=seed/2147483648-1;}
-      void ctx.audioWorklet.addModule(asset(this.profile+'-drive-processor.js')).then(()=>{
+      // Plain HTTP on a LAN does not expose AudioWorklet.
+      void ctx.audioWorklet?.addModule(asset(this.profile+'-drive-processor.js')).then(()=>{
         if(this.ctx!==ctx)return;
         const node=this.engine=new AudioWorkletNode(ctx,'apex-'+this.profile+'-drive',{numberOfInputs:0,numberOfOutputs:3,outputChannelCount:[1,1,1]});
         this.exhaustFilter=ctx.createBiquadFilter();this.exhaustFilter.type='lowpass';this.exhaustFilter.Q.value=.55;
