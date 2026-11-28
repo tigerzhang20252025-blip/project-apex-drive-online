@@ -12,7 +12,7 @@ This document records the long-term Git repository architecture, remote layout, 
 
 ## Open the development workspace
 
-Open `project-apex-drive-online` directly in Antigravity for online work. Open `project-apex-drive-offline` separately for offline work. Each checkout has its own Git history, installed dependencies, and local vehicles. Use `feat/online-multiplayer` in the online checkout for the current development baseline. The online `main` branch tracks the stable release history.
+The only permanent development workspaces are `project-apex-drive-online` and `project-apex-drive-offline`. Open the appropriate folder directly in Antigravity or Codex. Each checkout has its own Git history, installed dependencies, and local vehicles. Use `feat/online-multiplayer` in the online checkout for the current development baseline. The online `main` branch tracks the stable release history.
 
 The collaboration fork remains on GitHub. When an upstream contribution is explicitly authorized, create the contribution branch in the online checkout from `upstream/develop` and use its `collab` remote for that branch. The historical collaboration checkout is retained for recovery.
 
@@ -65,14 +65,15 @@ Never submit the entire independent development or `main` branch as an upstream 
 
 ## 6. Development Continuity and Preserving Existing Work
 
-Antigravity is the sole active coding agent across these repositories. Before starting any task:
+Antigravity is the primary coding agent. Codex is an additional agent. Development is sequential in the two shared checkouts. Before starting any task:
 
 1. Confirm the active repository and working directory.
 2. Inspect `git status -sb`, `git branch -a`, `git worktree list`, and recent commits (`git log -n 10 --oneline --decorate`).
 3. Check for existing uncommitted changes across active worktrees.
 4. Review and reuse suitable existing implementations and preserve completed work while applying independent engineering judgment.
 5. Do not overwrite, revert, or duplicate existing work without investigating it first.
-6. Use isolated branches or temporary worktrees only when separate isolation is needed (for example, testing or preparing an upstream `contrib/*` branch).
+6. Work on branches in the existing checkout. External worktrees and separate agent copies are prohibited. Keep essential resources and Git metadata within the workspace, report access restrictions, and keep historical archives for recovery.
+7. Run the relevant tests and leave a clear Git status and a brief handover for the next agent.
 
 ## 7. Git Safety Rules
 

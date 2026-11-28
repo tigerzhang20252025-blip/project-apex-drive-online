@@ -40,10 +40,11 @@ See [docs/REPOSITORY_STRATEGY.md](docs/REPOSITORY_STRATEGY.md) for full details 
 
 ## Development Continuity and Preserving Existing Work
 
-- Antigravity is the sole active coding agent for Project Apex Drive.
-- Open `project-apex-drive-online` itself as the Antigravity workspace for online work. Use this checkout’s own Git metadata, assets, dependencies and relay. Historical archives and detached test directories are recovery material.
+- Antigravity is the primary coding agent. Codex is an additional agent. Both agents take turns working directly in the same project folders.
+- Open `project-apex-drive-online` itself as the shared workspace for online work. Use this checkout’s own Git metadata, assets, dependencies and relay. Historical archives and detached test directories are recovery material.
 - Before starting any task: confirm the local repository and working directory, inspect `git branch`, `git status`, `git worktree list`, and recent commits, and check for existing or uncommitted work.
-- Reuse suitable existing implementations and preserve completed or uncommitted work while exercising independent engineering judgment. Do not overwrite, revert, or duplicate existing work without investigating it first. Use isolated branches or temporary worktrees only when separate isolation is needed.
+- Run relevant tests, fix confirmed defects, and leave focused local commits or an explicit Git status with a brief handover.
+- Reuse suitable existing implementations and preserve completed or uncommitted work while exercising independent engineering judgment. Do not overwrite, revert, or duplicate existing work without investigating it first. Use branches in the existing checkout. External development worktrees, extra agent-specific checkouts and temporary development copies are prohibited. Keep Git metadata and essential development resources in the project directory. If direct access is unavailable, report it.
 
 ## Git Safety Rules
 
