@@ -1,6 +1,6 @@
-# Apex Drive | Phase 1 relay proof of concept
+# Apex Drive relay and diagnostic page
 
-This standalone Workers project serves a browser test page and relays synthetic poses between two players. The game and its production Netlify site are independent of the test page. Netlify Server supports WebSockets, with free Early Access followed by metered reserved memory and active CPU at general availability. The ongoing Workers Free plan remains the pilot candidate. [Netlify Server pricing](https://docs.netlify.com/build/server/#pricing)
+This Worker hosts the two-player relay diagnostic at the root and serves the game with two-to-six-player rooms at `/play/`. The diagnostic and game use separate room codes. See [multiplayer](../docs/MULTIPLAYER.md) for the independent game build and release workflow.
 
 ## Local verification
 
@@ -34,7 +34,7 @@ The same-origin page uses HTTPS for create, join and resume, then opens WSS. The
 
 The browser keeps the resume token in memory. A 30-second one-time WebSocket ticket travels in the subprotocol offer. The socket URL contains only the opaque room ID. The room code is shared privately. Reports exclude codes, socket tickets, tokens, room IDs and IP addresses. Reloading the page loses its resume token. The room reserves a disconnected seat for 45 seconds after detecting the connection loss. A dedicated alarm closes expired rooms, clears their state and releases their directory entries. The Directory retains a small rolling usage ledger for budgeting.
 
-Admission requires a same-origin request and is limited at the edge to approximately 45 requests per source per minute per Cloudflare location. The Directory limits active rooms to three and caps admissions to 120 and reserved room time to nine hours per rolling 24 hours. The hard room lifetime is 75 minutes. An unclaimed first seat expires after 30 seconds. A socket allows 20 pose messages per second with a bounded burst, one control message per second, and 512 bytes per frame. The sender skips poses under local backpressure. The relay stops adding poses to a receiver after 32 deliveries await acknowledgment. Client reconnect attempts back off and stop after a finite window. The platform's shared Free limits remain the final cost boundary.
+Admission requires a same-origin request and is limited at the edge to approximately 45 requests per source per minute per Cloudflare location. The Directory limits active rooms to three and caps admissions to 120 and reserved room time to five hours per rolling 24 hours. The hard room lifetime is 75 minutes. An unclaimed first seat expires after 30 seconds. A socket allows 20 pose messages per second with a bounded burst, one diagnostic control message per second, and 1,024 bytes per frame. The sender skips poses under local backpressure. The relay stops adding poses to a receiver after 32 deliveries await acknowledgment. Client reconnect attempts back off and stop after a finite window. The platform's shared Free limits remain the final cost boundary.
 
 ## Proposed Cloudflare resources
 
@@ -85,7 +85,7 @@ Two active clients send `2 × rate × 3,600` snapshots per hour. Each is relayed
 | 15 Hz | 108,000 | 5,400 | 29.4 MB |
 | 20 Hz | 144,000 | 7,200 | 39.2 MB |
 
-Allow roughly 180 additional request equivalents per room-hour for two browser pings every two seconds, plus nonstreaming traffic for upgrades, admission and alarms. The nine-hour ceiling at 20 Hz is about 66,420 request equivalents including those pings, before HTTP/RPC and alarm traffic, and 4,147 GB-s assuming each room is continuously active at 128 MB. Cloudflare Free allows 100,000 DO request equivalents, 13,000 GB-s, 5 million row reads and 100,000 row writes per day. The Worker has a separate 100,000 daily request limit. Clean room lifecycles add roughly tens of storage operations and no snapshot writes. Actual billing, overhead and hibernation behavior must be measured in the deployed pilot. A platform quota error can interrupt the pilot, especially if usage is shared with other Workers. [Durable Objects pricing](https://developers.cloudflare.com/durable-objects/platform/pricing/), [Workers limits](https://developers.cloudflare.com/workers/platform/limits/)
+Allow roughly 180 additional request equivalents per room-hour for two browser pings every two seconds, plus nonstreaming traffic for upgrades, admission and alarms. Five room-hours at 20 Hz for two diagnostic clients use about 36,900 request equivalents including pings. Five hours with six game clients at 15 Hz use about 89,100 equivalents including pings and timing updates, before HTTP/RPC and alarm traffic. Five continuously active hours at 128 MB use about 2,304 GB-s. Cloudflare Free allows 100,000 DO request equivalents, 13,000 GB-s, 5 million row reads and 100,000 row writes per day. The Worker has a separate 100,000 daily request limit. Clean room lifecycles add roughly tens of storage operations and no snapshot writes. Actual billing, overhead and hibernation behavior must be measured in the deployed pilot. A platform quota error can interrupt the pilot, especially if usage is shared with other Workers. [Durable Objects pricing](https://developers.cloudflare.com/durable-objects/platform/pricing/), [Workers limits](https://developers.cloudflare.com/workers/platform/limits/)
 
 ## Cross-network field pilot
 

@@ -1,6 +1,6 @@
 # Project Apex Drive Online
 
-An open-source 3D racing and driving simulator built with Three.js, TypeScript and Rapier. Drive a Ferrari F40 or the fictional Nissan GT-R R35 Rally Edition on Alpine Proving Ground or Pineglass Run 2.0. Both courses are available in single player and two-player multiplayer.
+An open-source 3D racing and driving simulator built with Three.js, TypeScript and Rapier. Drive a Ferrari F40 or the fictional Nissan GT-R R35 Rally Edition on Alpine Proving Ground or Pineglass Run 2.0. Both courses are available in single player and 2–6 player multiplayer.
 
 [Multiplayer setup](docs/MULTIPLAYER.md) · [Pineglass Run 2.0](docs/PINEGLASS_RUN.md) · [Asset credits](THIRD_PARTY_NOTICES.md)
 
@@ -51,7 +51,7 @@ npm ci
 npm run dev
 ```
 
-Open the game in two browser sessions, choose **Multiplayer**, and share the room code. The host selects Alpine or Pineglass and chooses Free Drive or the timed challenge. Internet play uses a separately hosted relay with a matching game revision. See [multiplayer setup](docs/MULTIPLAYER.md) for the hosted option.
+Open the game in two to six browser sessions, choose **Multiplayer**, and share the room code. The host selects Alpine or Pineglass and chooses Free Drive or the timed challenge. The production bundle serves the game and matching relay from the same Worker. See [multiplayer setup](docs/MULTIPLAYER.md) for LAN play, verification, and release preparation.
 
 ## Default controls
 
@@ -70,7 +70,7 @@ Right-drag to look around the cockpit. Open **Help → Controls** to see current
 
 ## Stack and layout
 
-Three.js renders through WebGL. TypeScript implements the game, Rapier 3D supplies dynamics, Vite builds the app, Web Audio synthesizes vehicle sound and Netlify serves production.
+Three.js renders through WebGL. TypeScript implements the game, Rapier 3D supplies dynamics, Vite builds the app, and Web Audio synthesizes vehicle sound. Cloudflare serves the online edition and relay.
 
 | Path | Purpose |
 | --- | --- |

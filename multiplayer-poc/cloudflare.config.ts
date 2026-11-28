@@ -14,7 +14,7 @@ export default defineConfig(({ mode }) => ({
         namespace: '27182501',
         simple: { limit: 45, period: 60 },
       }),
-      GAME_FRONTEND_ORIGIN: bindings.text(process.env.APEX_FRONTEND_ORIGIN ?? 'https://apex-drive-multiplayer-pilot.netlify.app'),
+      GAME_FRONTEND_ORIGIN: bindings.text(process.env.APEX_FRONTEND_ORIGIN ?? ''),
       LOCAL_GAME_TEST: bindings.text(mode === 'local-game-test' ? 'true' : 'false'),
       LOCAL_EXPIRY_TEST: bindings.text(mode === 'local-expiry' ? 'true' : 'false'),
     },
